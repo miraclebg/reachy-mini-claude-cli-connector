@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 
 # Bulgarian transcripts get logged; make sure the stream can encode them even under
 # a C/POSIX locale (the app subprocess may not inherit a UTF-8 locale).
@@ -27,6 +28,7 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 from reachy_mini import ReachyMini, ReachyMiniApp
+from reachy_mini.utils import create_head_pose
 
 from .audio import ReachyMiniBackend
 from .button_server import ButtonState, History, StatusState
@@ -81,7 +83,15 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
 
         @app.get("/frame")
         def _frame() -> Response:
-            jpeg = reachy_mini.media.get_frame_jpeg()
+            # A frame is only ever requested on a "look" command, so first center and
+            # straighten the head to face the subject, let it settle, then capture.
+            try:
+                reachy_mini.goto_target(create_head_pose(), antennas=[0.0, 0.0], duration=0.5)
+                time.sleep(0.6)
+                jpeg = reachy_mini.media.get_frame_jpeg()
+            except Exception as e:  # never 500 — the connector treats non-200 as "no frame"
+                self.logger.warning("frame capture failed: %s", e)
+                return Response(status_code=503, content=b"frame error")
             if not jpeg:
                 return Response(status_code=503, content=b"no frame")
             return Response(content=bytes(jpeg), media_type="image/jpeg")
