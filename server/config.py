@@ -51,10 +51,14 @@ class Settings:
     #   plan     -> planning only, no side effects.
     # There's no human to approve prompts in a voice loop, so avoid interactive modes.
     permission_mode: str = os.environ.get("CLAUDE_PERMISSION_MODE", "auto")
-    # Explicitly-allowed tools. Under `auto` this is largely moot (auto approves
-    # beyond it); it matters under `dontAsk`. Web tools let Reachy answer live
-    # questions (weather, news).
-    allowed_tools: str = os.environ.get("CLAUDE_ALLOWED_TOOLS", "Read,Glob,Grep,WebSearch,WebFetch")
+    # Allowed tools. IMPORTANT: this is a hard allow-list even under `auto` — a tool
+    # NOT listed here is blocked, not auto-approved. So `Bash` must be present for
+    # Reachy to run shell commands (e.g. read your Desktop), and `Edit`/`Write` to
+    # change files. The default is fully capable (paired with `auto`); for a read-only
+    # posture set this to `Read,Glob,Grep,WebSearch,WebFetch` AND use `dontAsk`.
+    allowed_tools: str = os.environ.get(
+        "CLAUDE_ALLOWED_TOOLS", "Read,Edit,Write,Glob,Grep,Bash,WebSearch,WebFetch"
+    )
     # Belt-and-suspenders. Deny rules always win, even if the mode is loosened.
     disallowed_tools: str = os.environ.get(
         "CLAUDE_DISALLOWED_TOOLS",
