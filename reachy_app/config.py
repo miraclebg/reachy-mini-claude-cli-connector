@@ -9,11 +9,20 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+# User config path for the INSTALLED app (its package-sibling .env in site-packages
+# isn't user-editable). Overridable via REACHY_APP_CONFIG.
+USER_CONFIG = os.environ.get(
+    "REACHY_APP_CONFIG",
+    os.path.expanduser("~/.config/reachy-mini-claude/config.env"),
+)
+
 try:
     from dotenv import load_dotenv
-    # Load THIS package's .env regardless of the current working directory
-    # (the app is launched from the repo root as `python -m reachy_app.main`).
+    # 1) THIS package's .env (dev / standalone, launched from the repo root).
     load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+    # 2) The user config file (for the packaged app on the robot); wins over #1.
+    if os.path.exists(USER_CONFIG):
+        load_dotenv(USER_CONFIG, override=True)
 except Exception:
     # dotenv is optional; real env vars still work without it.
     pass

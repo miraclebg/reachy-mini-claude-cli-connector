@@ -149,12 +149,18 @@ class ReachyMiniBackend(AudioBackend):
     _ANT_NEUTRAL = (0.0, 0.0)
     _ANT_PERK = (0.5, 0.5)
 
-    def __init__(self, media_backend: str = "default") -> None:
+    def __init__(self, media_backend: str = "default", mini=None) -> None:
         from reachy_mini import ReachyMini  # lazy: robot-only dependency
         self._create_head_pose = self._import_head_pose()
-        # Enter the SDK context manager manually; close() exits it.
-        self._cm = ReachyMini(log_level="INFO", media_backend=media_backend)
-        self.mini = self._cm.__enter__()
+        if mini is not None:
+            # Packaged-app mode: the ReachyMiniApp framework already connected and
+            # owns the lifecycle. Use its instance; don't create or close our own.
+            self._cm = None
+            self.mini = mini
+        else:
+            # Standalone mode: enter the SDK context manager manually; close() exits it.
+            self._cm = ReachyMini(log_level="INFO", media_backend=media_backend)
+            self.mini = self._cm.__enter__()
         self.input_samplerate = self.mini.media.get_input_audio_samplerate()
         log.info("ReachyMiniBackend ready (input sr=%d)", self.input_samplerate)
 
@@ -229,6 +235,8 @@ class ReachyMiniBackend(AudioBackend):
         self.mini.goto_target(self._head(), antennas=list(self._ANT_NEUTRAL), duration=0.3)
 
     def close(self) -> None:
+        if self._cm is None:
+            return  # external mini — not ours to close
         try:
             self._cm.__exit__(None, None, None)
         except Exception:

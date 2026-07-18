@@ -111,8 +111,10 @@ class ConversationLoop:
         self.backend.enter_idle()
         return reply
 
-    # --- run until interrupted ---
-    def run_forever(self) -> None:
+    # --- run until interrupted / stopped ---
+    def run_forever(self, stop_event=None) -> None:
+        """Loop until KeyboardInterrupt or `stop_event` is set (the app framework
+        passes its stop_event so the dashboard can stop the app cleanly)."""
         if self.button is None and (self.wake is None or not self.wake.enabled):
             log.warning("no active triggers (button disabled and wake word off) — nothing to do.")
         if self.wake is not None:
@@ -122,7 +124,7 @@ class ConversationLoop:
         self.backend.enter_idle()
         log.info("ready. waiting for a trigger…")
         try:
-            while self._running:
+            while self._running and (stop_event is None or not stop_event.is_set()):
                 mode = self._poll_trigger()
                 if mode is None:
                     time.sleep(0.02)

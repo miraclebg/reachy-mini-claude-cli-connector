@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reachy-mini-claude-connector"
+version = "0.1.0"
+description = "Voice conversation with Claude Code (on your Mac) through a Reachy Mini."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "Martin Kovachev", email = "miracle@nimasystems.com" }]
+keywords = ["reachy-mini-app"]
+dependencies = [
+    "reachy-mini",
+    "requests>=2.31",
+    "numpy>=1.24",
+    "python-dotenv>=1.0",
+]
+
+# How the Reachy dashboard discovers this app. `python -m reachy_app.app` (the module
+# side of this entry point) is what the app manager launches.
+[project.entry-points."reachy_mini_apps"]
+reachy_claude_connector = "reachy_app.app:ReachyClaudeConnectorApp"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["reachy_app*"]
+exclude = ["reachy_app.tests*"]
+
+[tool.setuptools.package-data]
+reachy_app = ["static/*"]
