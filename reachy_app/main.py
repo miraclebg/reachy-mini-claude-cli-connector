@@ -36,7 +36,9 @@ def main() -> int:
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     log = logging.getLogger("reachy.main")
 
-    client = ConnectorClient(args.connector_url, timeout_s=settings.request_timeout_s)
+    client = ConnectorClient(
+        args.connector_url, timeout_s=settings.request_timeout_s, token=settings.connector_token
+    )
     try:
         h = client.health()
         log.info("connector ok: %s", h)
@@ -53,7 +55,7 @@ def main() -> int:
     button_server = None
     button_state = None
     if settings.button_enabled and not args.no_button:
-        button_server = ButtonServer(settings.button_host, settings.button_port)
+        button_server = ButtonServer(settings.button_host, settings.button_port, settings.button_token)
         button_server.start()
         button_state = button_server.state
 

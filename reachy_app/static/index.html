@@ -98,6 +98,10 @@
   const btn      = document.getElementById("talk");
   let held = false, lastSeq = -1;
 
+  // The page was opened as .../?token=SECRET; reuse it (as a header) on every call.
+  const TOKEN = new URLSearchParams(location.search).get("token") || "";
+  const AUTH = TOKEN ? { "X-Auth-Token": TOKEN } : {};
+
   const LABELS = {
     idle: "Ready", listening: "Listening…", thinking: "Thinking…",
     speaking: "Speaking…", error: "Error", offline: "Offline",
@@ -108,7 +112,7 @@
   }
 
   async function post(path) {
-    try { await fetch(path, { method: "POST", keepalive: true }); }
+    try { await fetch(path, { method: "POST", headers: AUTH, keepalive: true }); }
     catch (e) { renderStatus("offline"); }
   }
   function down(e) {
@@ -149,12 +153,12 @@
   }
 
   async function pollStatus() {
-    try { renderStatus((await (await fetch("/status", { cache: "no-store" })).json()).state); }
+    try { renderStatus((await (await fetch("/status", { headers: AUTH, cache: "no-store" })).json()).state); }
     catch (e) { renderStatus("offline"); }
   }
   async function pollHistory() {
     try {
-      const data = await (await fetch("/history", { cache: "no-store" })).json();
+      const data = await (await fetch("/history", { headers: AUTH, cache: "no-store" })).json();
       if (data.seq !== lastSeq) { lastSeq = data.seq; renderHistory(data.turns); }
     } catch (e) { /* keep last render */ }
   }

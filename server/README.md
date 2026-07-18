@@ -70,11 +70,16 @@ calls** (no human to click "approve" in a voice loop). In practice:
 - ✅ Claude can **read/search/edit files, run shell commands, and search the web**
   (`WebSearch`,`WebFetch` are in the allow-list, so Reachy can answer live questions
   like weather). It just does the thing and answers.
-- 🛑 The **deny list is the guardrail** — `Bash(rm *)`, `Bash(sudo *)`, `Bash(curl *)`,
-  `Bash(wget *)`, `Bash(git push *)`. Deny rules **always win, even under `auto`**
-  (verified: an `rm` request is blocked). Harden this list to taste in `.env`.
-- ⚠️ **Trust model:** anyone who can speak to the robot can run commands on this Mac
-  (minus the deny list). Fine on your own machine; know what you're exposing.
+- 🔑 **Access control is the token.** The connector requires `CONNECTOR_TOKEN` on every
+  request except `/health` (`Authorization: Bearer <token>`); set it in `.env` and match
+  it in `reachy_app/.env`. Empty ⇒ the server runs open and logs a warning. This is what
+  keeps an arbitrary LAN device from driving Claude.
+- 🛑 The **deny list is defense-in-depth, not a boundary** — `Bash(rm *)`, `Bash(sudo *)`,
+  … . Deny rules do beat allow rules, **but the list is easily bypassed** (`/bin/rm`,
+  `find … -delete`, `python -c "os.remove(...)"`). It catches accidents; it does not
+  contain a determined request. Harden it in `.env`, but don't rely on it.
+- ⚠️ **Trust model:** anyone holding the token can run commands on this Mac (minus the
+  deny list) under `auto`. Keep the token secret; use `dontAsk` if you want read-only.
 
 Switch postures without code changes:
 - `CLAUDE_PERMISSION_MODE=dontAsk` (or `make run PERMISSION=dontAsk`) → read-only:
@@ -83,8 +88,8 @@ Switch postures without code changes:
 - `plan` → planning only, no side effects.
 
 Everything runs inside `../claude-workspace/` (the session dir for `--resume`), but
-note that under `auto` shell commands can still reach outside it — the deny list, not
-the working dir, is the real boundary.
+under `auto` shell commands can reach outside it — the working dir is not a sandbox.
+Access is gated by the token; capability is gated by the permission mode.
 
 Replies are passed through `clean_for_speech()` (strips citations/URLs that web search
 adds) so TTS never reads a link aloud.

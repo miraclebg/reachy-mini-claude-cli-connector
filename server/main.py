@@ -12,13 +12,14 @@ Endpoints:
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import tempfile
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, Response
 
 from config import settings
 from claude_client import ClaudeClient, ClaudeError
@@ -29,6 +30,28 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 log = logging.getLogger("connector")
 
 app = FastAPI(title="Reachy Mini <-> Claude Code connector")
+
+
+def _request_token(request: Request) -> str:
+    """Read the bearer/`X-Auth-Token` credential off a request."""
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.headers.get("x-auth-token", "")
+
+
+# Auth is important here because Claude runs with command-execution permissions and
+# the server may listen on 0.0.0.0. /health stays open for readiness probes (it
+# exposes only config metadata, no conversation content or command surface).
+_OPEN_PATHS = {"/health"}
+
+
+@app.middleware("http")
+async def require_token(request: Request, call_next):
+    if settings.connector_token and request.url.path not in _OPEN_PATHS:
+        if not hmac.compare_digest(_request_token(request), settings.connector_token):
+            return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+    return await call_next(request)
 
 # --- init the pipeline once ---
 os.makedirs(settings.claude_working_dir, exist_ok=True)
@@ -53,6 +76,15 @@ try:
 except TTSError as e:
     log.warning("TTS not ready: %s  (/chat/text still works; set PIPER_MODEL for audio)", e)
     tts = None
+
+if settings.connector_token:
+    log.info("auth: token required on all endpoints except /health")
+else:
+    log.warning(
+        "auth: CONNECTOR_TOKEN not set — endpoints are OPEN. Anyone who can reach "
+        "%s:%s can drive Claude (command execution under '%s'). Set CONNECTOR_TOKEN.",
+        settings.host, settings.port, settings.permission_mode,
+    )
 
 
 @app.get("/health")

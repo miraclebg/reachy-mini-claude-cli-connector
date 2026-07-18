@@ -11,7 +11,9 @@ from dataclasses import dataclass
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # Load THIS package's .env regardless of the current working directory
+    # (the app is launched from the repo root as `python -m reachy_app.main`).
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 except Exception:
     # dotenv is optional; real env vars still work without it.
     pass
@@ -27,6 +29,8 @@ class Settings:
     # On the Pi, set this to the Mac's LAN IP, e.g. http://192.168.1.20:8080
     connector_url: str = os.environ.get("CONNECTOR_URL", "http://localhost:8080")
     request_timeout_s: float = float(os.environ.get("REQUEST_TIMEOUT_S", "180"))
+    # Must match the connector's CONNECTOR_TOKEN (empty = the connector has auth off).
+    connector_token: str = os.environ.get("CONNECTOR_TOKEN", "")
 
     # --- which audio/motion backend ---
     #   local   -> Mac mic + speakers (sounddevice), no robot. For testing.
@@ -51,6 +55,9 @@ class Settings:
     button_enabled: bool = _as_bool(os.environ.get("BUTTON_ENABLED", "true"))
     button_host: str = os.environ.get("BUTTON_HOST", "0.0.0.0")
     button_port: int = int(os.environ.get("BUTTON_PORT", "8081"))
+    # Protects the phone page + /status + /history + press/release. Empty = auth OFF.
+    # The phone opens the page as .../?token=<BUTTON_TOKEN>; the page reuses it.
+    button_token: str = os.environ.get("BUTTON_TOKEN", "")
 
     # --- wake word ("Hey Reachy" via Porcupine) ---
     # Inactive unless BOTH an access key and a keyword .ppn are provided.

@@ -29,19 +29,21 @@ class ChatReply:
 
 
 class ConnectorClient:
-    def __init__(self, base_url: str, timeout_s: float = 180.0) -> None:
+    def __init__(self, base_url: str, timeout_s: float = 180.0, token: str = "") -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_s = timeout_s
+        # Sent on every request; the connector requires it unless its auth is off.
+        self._headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     def health(self) -> dict:
-        r = requests.get(f"{self.base_url}/health", timeout=10)
+        r = requests.get(f"{self.base_url}/health", headers=self._headers, timeout=10)
         r.raise_for_status()
         return r.json()
 
     def reset(self) -> None:
         """Forget the conversation on the server (new session next turn)."""
         try:
-            requests.post(f"{self.base_url}/reset", timeout=10).raise_for_status()
+            requests.post(f"{self.base_url}/reset", headers=self._headers, timeout=10).raise_for_status()
         except requests.RequestException as e:
             raise ConnectorError(f"reset failed: {e}") from e
 
@@ -51,6 +53,7 @@ class ConnectorClient:
             r = requests.post(
                 f"{self.base_url}/chat",
                 files={"audio": ("utterance.wav", wav_bytes, "audio/wav")},
+                headers=self._headers,
                 timeout=self.timeout_s,
             )
         except requests.RequestException as e:

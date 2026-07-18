@@ -49,6 +49,9 @@ python -m reachy_app.main --backend reachy
 
 Then open the **hold-to-talk page** from your phone (same LAN):
 `http://<this-host>:8081/` — press and hold while you speak, release when done.
+If `BUTTON_TOKEN` is set, open it as `http://<this-host>:8081/?token=<BUTTON_TOKEN>`
+(the launcher prints the full URL). Likewise set `CONNECTOR_TOKEN` to match the
+connector, or calls to it are rejected with 401.
 The page is a small chat UI:
 - a **live status indicator** — `Ready · Listening · Thinking · Speaking · error/offline`
   — driven by the real loop state (so it reflects wake-word turns too, not just button

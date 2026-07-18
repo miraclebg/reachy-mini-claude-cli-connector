@@ -142,12 +142,13 @@ precedence). Copy the `.env.example` templates and edit.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
+| `CONNECTOR_TOKEN` | — | **Recommended.** Shared secret required on all endpoints except `/health`. Must match `reachy_app/.env`. |
 | `PIPER_MODEL` | — | **Required for audio.** Absolute path to a Piper `.onnx` voice. |
 | `CLAUDE_MODEL` | *(CLI default)* | `opus` \| `sonnet` \| `haiku` \| `fable`, or a full id. |
 | `CLAUDE_EFFORT` | *(CLI default)* | `low` \| `medium` \| `high` \| `xhigh` \| `max`. Lower = snappier replies. |
 | `CLAUDE_PERMISSION_MODE` | `auto` | `auto` (tools auto-approved) \| `dontAsk` (read-only) \| `plan`. See [Permissions](#permissions--security). |
 | `CLAUDE_ALLOWED_TOOLS` | `Read,Glob,Grep,WebSearch,WebFetch` | Explicit allow-list (matters under `dontAsk`). |
-| `CLAUDE_DISALLOWED_TOOLS` | `Bash(rm *),Bash(sudo *),Bash(curl *),Bash(wget *),Bash(git push *)` | **Deny list — always wins, even under `auto`.** |
+| `CLAUDE_DISALLOWED_TOOLS` | `Bash(rm *),Bash(sudo *),Bash(curl *),Bash(wget *),Bash(git push *)` | Best-effort deny list (defense-in-depth; **bypassable**, not a security boundary — see [Permissions](#permissions--security)). |
 | `CLAUDE_MAX_TURNS` | `6` | Cap on agent-loop turns per utterance. |
 | `CLAUDE_WORKING_DIR` | `./claude-workspace` | Where Claude runs (scopes `--resume` sessions). |
 | `CLAUDE_TIMEOUT_S` | `120` | Per-turn timeout. |
@@ -161,6 +162,8 @@ precedence). Copy the `.env.example` templates and edit.
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `CONNECTOR_URL` | `http://localhost:8080` | On the Pi, set to the Mac's LAN IP. |
+| `CONNECTOR_TOKEN` | — | Must match the connector's `CONNECTOR_TOKEN`. |
+| `BUTTON_TOKEN` | — | Protects the phone page/status/history. Open as `…:8081/?token=<it>`. |
 | `REACHY_BACKEND` | `local` | `local` (Mac mic/speaker) \| `reachy` (robot SDK). |
 | `BUTTON_PORT` | `8081` | The hold-to-talk page + status/history endpoints. |
 | `WAKEWORD_ENABLED` | `true` | Inactive until a key + keyword are provided. |
@@ -209,7 +212,7 @@ Served at `http://<host>:8081/`. It's a small chat UI:
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET`  | `/health` | Readiness + live config (model, effort, permission, tools, session id). |
+| `GET`  | `/health` | Readiness + live config (model, effort, permission, tools, session id). **Open (no token).** |
 | `POST` | `/chat` | multipart WAV in → WAV out (the robot path). Transcript/reply in `X-Transcript`/`X-Reply` headers. |
 | `POST` | `/chat/text` | `{"text": "..."}` → `{"reply", "session_id"}`. Test the Claude loop with no audio. |
 | `POST` | `/reset` | Forget the conversation; next turn starts a fresh session. |
@@ -218,10 +221,13 @@ Served at `http://<host>:8081/`. It's a small chat UI:
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET`  | `/` | The hold-to-talk page. |
+| `GET`  | `/` | The hold-to-talk page. Requires `?token=` when `BUTTON_TOKEN` is set. |
 | `GET`  | `/status` | `{"state":"idle"}` — current loop phase. |
 | `GET`  | `/history` | `{"seq":N,"turns":[{"you","reply"}]}` — conversation log. |
 | `POST` | `/press` / `/release` | Button hold / end-of-speech. |
+
+All app endpoints except `/health` require the token (via `?token=` or an
+`X-Auth-Token` header) when `BUTTON_TOKEN` is configured.
 
 ---
 
@@ -229,27 +235,46 @@ Served at `http://<host>:8081/`. It's a small chat UI:
 
 The connector runs Claude with `--permission-mode auto`, which **auto-approves tool
 calls** (there's no human to click "approve" in a voice loop). In practice Claude can
-**read/edit files, run shell commands, and search the web** — bounded by the
-`CLAUDE_DISALLOWED_TOOLS` **deny list**, which always wins even under `auto`.
+**read/edit files, run shell commands, and search the web**.
 
-> ⚠️ **Trust model:** with `auto`, anyone who can speak to the robot can run commands on
-> the Mac (minus the deny list). That's fine on your own machine and LAN — just know
-> what you're exposing. Harden the deny list, or switch to a read-only posture:
+**Two layers matter — don't confuse them:**
+
+1. **Access control (the real boundary): shared-token auth.** Both services require a
+   secret token, so only clients that hold it can talk to them:
+   - The **connector** (8080) requires `CONNECTOR_TOKEN` on every request except
+     `/health` (sent as `Authorization: Bearer <token>`). The robot app holds the
+     matching token. **This is what stops an arbitrary LAN device from driving Claude.**
+   - The **phone app** (8081) requires `BUTTON_TOKEN` for the page, status, history, and
+     button — open the page as `http://<host>:8081/?token=<BUTTON_TOKEN>`.
+
+   Set these in `server/.env` / `reachy_app/.env` (generate with
+   `python -c "import secrets;print(secrets.token_urlsafe(24))"`). If a token is empty,
+   that service logs a warning and runs **open** — only do that on a fully trusted network.
+
+2. **Blast-radius limiting (defense-in-depth, NOT a security boundary): the deny list.**
+   `CLAUDE_DISALLOWED_TOOLS` blocks a handful of commands (`rm`, `sudo`, `curl`, `wget`,
+   `git push`). Deny rules do take precedence over allow rules, **but the list is easily
+   sidestepped** — e.g. `/bin/rm`, `find … -delete`, or `python -c "os.remove(...)"` are
+   not matched. Treat it as a speed bump that catches accidents, **not** as something
+   that contains a determined or careless request. The real control is the token (who
+   can ask) plus your choice of permission mode (what Claude may do).
+
+> ⚠️ **Trust model:** under `auto`, anyone who holds the connector token can run commands
+> on the Mac (minus the deny list). Keep the token secret. For a stricter posture, switch
+> to read-only — Claude can then only read/search/web, not execute or edit:
 >
 > ```bash
 > make run PERMISSION=dontAsk        # deny anything not in CLAUDE_ALLOWED_TOOLS
 > ```
 
 Everything runs inside `claude-workspace/` (which scopes `--resume` session lookup), but
-under `auto` shell commands can reach outside it — the deny list, not the directory, is
-the real boundary.
+under `auto` shell commands can reach outside it — the directory is not a sandbox.
 
 Web-search replies are passed through `clean_for_speech()` so TTS never reads out URLs
 or "Sources:" citations.
 
 **Planned (v2):** move to the Python Agent SDK with a **spoken** tool-approval callback,
-so Reachy can ask out loud before anything destructive instead of relying only on the
-deny list.
+so Reachy can ask out loud before anything destructive instead of relying on `auto`.
 
 ---
 

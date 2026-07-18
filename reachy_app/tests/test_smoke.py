@@ -17,18 +17,24 @@ from __future__ import annotations
 
 import sys
 import time
+import urllib.error
 import urllib.request
 
 import numpy as np
 
 from reachy_app.audio import AudioBackend, pcm_to_wav, wav_to_pcm, wav_duration_s
 from reachy_app.button_server import ButtonServer, StatusState
+from reachy_app.config import settings
 from reachy_app.connector_client import ConnectorClient
 from reachy_app.loop import ConversationLoop
 from reachy_app.vad import SilenceEndpointer
 
 SERVER = "http://localhost:8080"
 FIXTURE = "/tmp/question.wav"
+
+
+def _client() -> ConnectorClient:
+    return ConnectorClient(SERVER, token=settings.connector_token)
 
 _passed = 0
 _failed = 0
@@ -146,9 +152,34 @@ class FakeBackend(AudioBackend):
     def enter_speaking(self):  self.states.append("speaking")
 
 
+def test_button_auth() -> None:
+    print("button server auth (token required)")
+    srv = ButtonServer("127.0.0.1", 8098, token="s3cret")
+    srv.start()
+    time.sleep(0.2)
+    try:
+        base = "http://127.0.0.1:8098"
+
+        def get(path, headers=None):
+            req = urllib.request.Request(base + path, headers=headers or {})
+            try:
+                return urllib.request.urlopen(req, timeout=2).getcode()
+            except urllib.error.HTTPError as e:
+                return e.code
+
+        check("no token -> 401 on /status", get("/status") == 401)
+        check("no token -> 401 on page", get("/") == 401)
+        check("query token -> 200", get("/status?token=s3cret") == 200)
+        check("header token -> 200", get("/status", {"X-Auth-Token": "s3cret"}) == 200)
+        check("wrong token -> 401", get("/status?token=nope") == 401)
+        check("/health open without token", get("/health") == 200)
+    finally:
+        srv.stop()
+
+
 def server_up() -> bool:
     try:
-        ConnectorClient(SERVER).health()
+        _client().health()
         return True
     except Exception:
         return False
@@ -166,7 +197,7 @@ def test_full_turn() -> None:
         print(f"  ⏭  SKIPPED — fixture {FIXTURE} missing")
         return
 
-    client = ConnectorClient(SERVER)
+    client = _client()
     client.reset()
     fake = FakeBackend(canned)
     states: list[str] = []
@@ -194,7 +225,7 @@ def test_full_turn() -> None:
 
 
 def main() -> int:
-    for t in (test_wav_roundtrip, test_endpointer, test_button_server, test_full_turn):
+    for t in (test_wav_roundtrip, test_endpointer, test_button_server, test_button_auth, test_full_turn):
         t()
     print(f"\n{_passed} passed, {_failed} failed")
     return 1 if _failed else 0

@@ -12,11 +12,13 @@ The main loop reads `take_press()` (a fresh press edge) to start a turn and
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 log = logging.getLogger("reachy.button")
 
@@ -89,7 +91,12 @@ class History:
         return json.dumps(payload).encode()
 
 
-def _make_handler(state: ButtonState, status: StatusState, history: History):
+# /health stays open for readiness probes (reveals nothing sensitive). Everything
+# else — the page, live status, conversation history, and the button — needs the token.
+_OPEN_PATHS = {"/health"}
+
+
+def _make_handler(state: ButtonState, status: StatusState, history: History, token: str):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args) -> None:  # silence default stderr spam
             pass
@@ -102,28 +109,43 @@ def _make_handler(state: ButtonState, status: StatusState, history: History):
             if body:
                 self.wfile.write(body)
 
+        def _authed(self, path: str) -> bool:
+            if not token or path in _OPEN_PATHS:
+                return True
+            supplied = self.headers.get("X-Auth-Token", "")
+            if not supplied:
+                supplied = parse_qs(urlsplit(self.path).query).get("token", [""])[0]
+            return hmac.compare_digest(supplied, token)
+
         def do_GET(self) -> None:
-            if self.path in ("/", "/index.html"):
+            path = urlsplit(self.path).path
+            if not self._authed(path):
+                self._send(401, b"unauthorized")
+                return
+            if path in ("/", "/index.html"):
                 try:
                     with open(_STATIC, "rb") as fh:
                         self._send(200, fh.read(), "text/html; charset=utf-8")
                 except OSError:
                     self._send(200, _FALLBACK_PAGE.encode(), "text/html; charset=utf-8")
-            elif self.path == "/status":
-                body = ('{"state":"%s"}' % status.get()).encode()
-                self._send(200, body, "application/json")
-            elif self.path == "/history":
+            elif path == "/status":
+                self._send(200, ('{"state":"%s"}' % status.get()).encode(), "application/json")
+            elif path == "/history":
                 self._send(200, history.as_json(), "application/json")
-            elif self.path == "/health":
+            elif path == "/health":
                 self._send(200, b'{"ok":true}', "application/json")
             else:
                 self._send(404, b"not found")
 
         def do_POST(self) -> None:
-            if self.path == "/press":
+            path = urlsplit(self.path).path
+            if not self._authed(path):
+                self._send(401, b"unauthorized")
+                return
+            if path == "/press":
                 state.press()
                 self._send(200, b'{"ok":true,"state":"held"}', "application/json")
-            elif self.path == "/release":
+            elif path == "/release":
                 state.release()
                 self._send(200, b'{"ok":true,"state":"released"}', "application/json")
             else:
@@ -133,17 +155,24 @@ def _make_handler(state: ButtonState, status: StatusState, history: History):
 
 
 class ButtonServer:
-    def __init__(self, host: str, port: int) -> None:
+    def __init__(self, host: str, port: int, token: str = "") -> None:
         self.state = ButtonState()
         self.status = StatusState()
         self.history = History()
-        self._httpd = ThreadingHTTPServer((host, port), _make_handler(self.state, self.status, self.history))
+        self.token = token
+        self._httpd = ThreadingHTTPServer(
+            (host, port), _make_handler(self.state, self.status, self.history, token)
+        )
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self.host, self.port = host, port
 
     def start(self) -> None:
         self._thread.start()
-        log.info("hold-to-talk page on http://%s:%d/", self.host, self.port)
+        suffix = f"?token={self.token}" if self.token else ""
+        if not self.token:
+            log.warning("button page has NO token — anyone on the LAN can see the "
+                        "conversation history. Set BUTTON_TOKEN to require one.")
+        log.info("hold-to-talk page on http://%s:%d/%s", self.host, self.port, suffix)
 
     def stop(self) -> None:
         self._httpd.shutdown()
@@ -155,7 +184,9 @@ _FALLBACK_PAGE = """<!doctype html><meta name=viewport content="width=device-wid
 justify-content:center;background:#111;font-family:sans-serif}#b{width:70vw;height:70vw;max-width:340px;
 max-height:340px;border-radius:50%;border:none;font-size:1.4rem;color:#fff;background:#c60;touch-action:none}
 #b.on{background:#0a0}</style><button id=b>Hold to talk</button><script>
-const b=document.getElementById('b');const P=p=>fetch(p,{method:'POST',keepalive:true});
+const b=document.getElementById('b');
+const T=new URLSearchParams(location.search).get('token')||'';
+const H=T?{'X-Auth-Token':T}:{};const P=p=>fetch(p,{method:'POST',headers:H,keepalive:true});
 const dn=e=>{e.preventDefault();b.classList.add('on');b.textContent='Listening…';P('/press')};
 const up=e=>{e.preventDefault();b.classList.remove('on');b.textContent='Hold to talk';P('/release')};
 b.addEventListener('pointerdown',dn);b.addEventListener('pointerup',up);

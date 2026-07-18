@@ -13,12 +13,16 @@ No sample WAV handy? Record ~3s from your Mac mic with ffmpeg:
 then:  python smoke_test.py --wav sample.wav
 """
 import argparse
+import os
 import sys
 from urllib.parse import unquote
 
 import requests
 
 BASE = "http://localhost:8080"
+# Match the server's CONNECTOR_TOKEN (if it has auth on).
+TOKEN = os.environ.get("CONNECTOR_TOKEN", "")
+HEADERS = {"Authorization": f"Bearer {TOKEN}"} if TOKEN else {}
 
 
 def main() -> int:
@@ -30,17 +34,18 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.reset:
-        print("reset:", requests.post(f"{args.base}/reset").json())
+        print("reset:", requests.post(f"{args.base}/reset", headers=HEADERS).json())
 
     if args.text:
-        r = requests.post(f"{args.base}/chat/text", json={"text": args.text}, timeout=180)
+        r = requests.post(f"{args.base}/chat/text", json={"text": args.text}, headers=HEADERS, timeout=180)
         r.raise_for_status()
         print("reply:", r.json()["reply"])
         return 0
 
     if args.wav:
         with open(args.wav, "rb") as fh:
-            r = requests.post(f"{args.base}/chat", files={"audio": ("in.wav", fh, "audio/wav")}, timeout=180)
+            r = requests.post(f"{args.base}/chat", files={"audio": ("in.wav", fh, "audio/wav")},
+                              headers=HEADERS, timeout=180)
         r.raise_for_status()
         print("heard :", unquote(r.headers.get("X-Transcript", "")))
         print("reply :", unquote(r.headers.get("X-Reply", "")))
@@ -49,7 +54,7 @@ def main() -> int:
         print("saved -> reply.wav")
         return 0
 
-    print("health:", requests.get(f"{args.base}/health").json())
+    print("health:", requests.get(f"{args.base}/health", headers=HEADERS).json())
     print("(pass --text or --wav to actually test the loop)")
     return 0
 

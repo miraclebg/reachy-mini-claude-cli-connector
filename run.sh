@@ -43,8 +43,13 @@ echo "  connector ready. log: /tmp/connector.log"
 
 IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo '<mac-ip>')"
 BUTTON_PORT="${BUTTON_PORT:-8081}"
+# If a BUTTON_TOKEN is configured, the phone URL needs it as ?token=…
+APP_ENV="$ROOT/reachy_app/.env"
+BTOKEN="${BUTTON_TOKEN:-}"
+[ -z "$BTOKEN" ] && [ -f "$APP_ENV" ] && BTOKEN="$(sed -n 's/^BUTTON_TOKEN=//p' "$APP_ENV" | head -1 | tr -d ' \r')"
+QS=""; [ -n "$BTOKEN" ] && QS="?token=$BTOKEN"
 echo
-echo "📱 Open on your phone (same Wi-Fi):  http://$IP:$BUTTON_PORT/"
+echo "📱 Open on your phone (same Wi-Fi):  http://$IP:$BUTTON_PORT/$QS"
 echo "   (local backend = phone is the button; mic/speaker are this Mac)"
 echo "   Ctrl-C to stop both."
 echo

@@ -9,7 +9,8 @@ from dataclasses import dataclass
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # Load this folder's .env regardless of the current working directory.
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 except Exception:
     # dotenv is optional; real env vars still work without it.
     pass
@@ -27,6 +28,11 @@ class Settings:
     # --- server ---
     host: str = os.environ.get("HOST", "0.0.0.0")
     port: int = int(os.environ.get("PORT", "8080"))
+    # Shared secret required on every request except /health. Empty = auth OFF
+    # (a warning is logged). Clients send it as `Authorization: Bearer <token>`.
+    # Strongly recommended when the server listens on 0.0.0.0, because Claude runs
+    # with command-execution permissions — see server/README.md "Permissions".
+    connector_token: str = os.environ.get("CONNECTOR_TOKEN", "")
 
     # --- Claude CLI ---
     claude_bin: str = os.environ.get("CLAUDE_BIN", "claude")
