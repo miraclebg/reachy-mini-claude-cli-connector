@@ -6,6 +6,8 @@ python-dotenv>=1.0        # optional .env loading
 faster-whisper>=1.0       # local speech-to-text
 requests>=2.31            # used by smoke_test.py
 
+pytest>=8.0            # connector unit tests
+
 # Text-to-speech is Piper, installed as a separate step (binary + a voice model).
 # See README "Install". The pip package below provides the `piper` CLI:
 piper-tts>=1.2
