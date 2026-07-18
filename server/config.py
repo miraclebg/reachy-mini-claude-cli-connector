@@ -98,6 +98,9 @@ class Settings:
     # If set, every incoming /chat utterance is saved here (raw, pre-normalization)
     # for diagnosing mic level/quality. Leave empty to disable.
     debug_audio_dir: str = os.environ.get("DEBUG_AUDIO_DIR", "")
+    # If set, every fetched camera frame is copied here (timestamped) for diagnosing
+    # what the camera actually captured. Leave empty to disable.
+    debug_vision_dir: str = os.environ.get("DEBUG_VISION_DIR", "")
 
     # --- vision (ask-to-see) ---
     vision_enabled: bool = _as_bool(os.environ.get("VISION_ENABLED", "true"))

@@ -172,6 +172,15 @@ async def chat(request: Request, audio: UploadFile = File(...)):
                     with open(img_file, "wb") as fh:
                         fh.write(frame)
                     image_path = "camera_view.jpg"  # relative to Claude's cwd (claude_working_dir)
+                    if settings.debug_vision_dir:  # keep a timestamped copy for diagnosis
+                        try:
+                            os.makedirs(settings.debug_vision_dir, exist_ok=True)
+                            import time as _t
+                            with open(os.path.join(settings.debug_vision_dir,
+                                                   _t.strftime("frame-%H%M%S.jpg")), "wb") as dbg:
+                                dbg.write(frame)
+                        except OSError:
+                            pass
                 except OSError as e:
                     log.warning("could not save camera frame: %s", e)
                     camera_failed = True
