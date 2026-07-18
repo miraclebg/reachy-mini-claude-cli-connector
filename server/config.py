@@ -99,5 +99,17 @@ class Settings:
     # for diagnosing mic level/quality. Leave empty to disable.
     debug_audio_dir: str = os.environ.get("DEBUG_AUDIO_DIR", "")
 
+    # --- vision (ask-to-see) ---
+    vision_enabled: bool = _as_bool(os.environ.get("VISION_ENABLED", "true"))
+    # Substring triggers (comma-separated). A frame is fetched only when the transcript
+    # contains one of these.
+    vision_triggers: str = os.environ.get(
+        "VISION_TRIGGERS", "виж,погледни,виждаш,снимк,камер,look,see"
+    )
+    camera_port: int = int(os.environ.get("CAMERA_PORT", "8042"))
+    camera_timeout_s: float = float(os.environ.get("CAMERA_TIMEOUT_S", "4"))
+    # Explicit robot base URL for /frame; empty = auto-discover from the request.
+    robot_camera_url: str = os.environ.get("ROBOT_CAMERA_URL", "")
+
 
 settings = Settings()

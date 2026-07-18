@@ -25,6 +25,7 @@ from config import settings
 from claude_client import ClaudeClient, ClaudeError
 from stt import STT
 from tts import TTS, TTSError
+from vision import fetch_frame, transcript_wants_vision
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("connector")
@@ -116,7 +117,7 @@ def chat_text(payload: dict):
 
 
 @app.post("/chat")
-async def chat(audio: UploadFile = File(...)):
+async def chat(request: Request, audio: UploadFile = File(...)):
     if tts is None:
         raise HTTPException(status_code=503, detail="TTS not configured (set PIPER_MODEL).")
 
@@ -124,6 +125,7 @@ async def chat(audio: UploadFile = File(...)):
     suffix = os.path.splitext(audio.filename or "")[1] or ".wav"
     fd, in_path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
+    img_file = os.path.join(settings.claude_working_dir, "camera_view.jpg")
     try:
         data = await audio.read()
         with open(in_path, "wb") as fh:
@@ -144,12 +146,27 @@ async def chat(audio: UploadFile = File(...)):
         # 2) STT
         transcript = stt.transcribe(in_path)
 
+        # 2b) Vision: only if the user asked to look, fetch a frame from the robot.
+        image_path = None
+        camera_failed = False
+        triggers = [t.strip() for t in settings.vision_triggers.split(",") if t.strip()]
+        if settings.vision_enabled and transcript and transcript_wants_vision(transcript, triggers):
+            base = settings.robot_camera_url or f"http://{request.client.host}:{settings.camera_port}"
+            log.info("vision trigger — fetching frame from %s", base)
+            frame = fetch_frame(base, settings.camera_timeout_s)
+            if frame:
+                with open(img_file, "wb") as fh:
+                    fh.write(frame)
+                image_path = "camera_view.jpg"  # relative to Claude's cwd (claude_working_dir)
+            else:
+                camera_failed = True
+
         # 3) if we heard nothing, answer without bothering Claude
         if not transcript:
             reply = settings.msg_no_speech
         else:
             try:
-                reply = claude.ask(transcript)
+                reply = claude.ask(transcript, image_path=image_path, camera_failed=camera_failed)
             except ClaudeError as e:
                 log.error("Claude error: %s", e)
                 reply = settings.msg_error
@@ -172,6 +189,11 @@ async def chat(audio: UploadFile = File(...)):
     finally:
         try:
             os.unlink(in_path)
+        except OSError:
+            pass
+        try:
+            if os.path.exists(img_file):
+                os.unlink(img_file)
         except OSError:
             pass
 
