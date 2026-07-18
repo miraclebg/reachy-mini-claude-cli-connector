@@ -237,7 +237,7 @@ All movement is safety-clamped on the robot.
 - For requests with no named routine, Claude composes its own keyframes on the fly, so
   "dance" is genuine improvisation rather than one canned routine.
 - Orientation moves (look/rotate/tilt) **hold** their pose; gesture moves (nod/shake/
-  flap/dance) **return** to neutral. Reachy re-centers on the next command or turn.
+  flap/dance) **return** to neutral. A held orientation pose stays put until your next movement command repositions it.
 
 ### Safety
 
@@ -277,11 +277,8 @@ reply still behaves correctly — nothing moves.
 | `GET`  | `/status` | `{"state":"idle"}` — current loop phase. |
 | `GET`  | `/history` | `{"seq":N,"turns":[{"you","reply"}]}` — conversation log. |
 | `POST` | `/press` / `/release` | Button hold / end-of-speech. |
-
-- `POST /move` — run a movement. Body `{"spec": "look_left"}` (named routine) or
-  `{"spec": [{"yaw": 20, "dur": 0.3}, …]}` (keyframes). Safety-clamped on the robot.
-- `GET /frame?hold=1` — capture from the current (already-moved) pose instead of rising
-  to the default photo pose.
+| `POST` | `/move` | Run a movement. Body `{"spec": "look_left"}` (named routine) or `{"spec": [{"yaw": 20, "dur": 0.3}, …]}` (keyframes). Safety-clamped on the robot. |
+| `GET`  | `/frame?hold=1` | Capture from the current (already-moved) pose instead of rising to the default photo pose. |
 
 All app endpoints except `/health` require the token (via `?token=` or an
 `X-Auth-Token` header) when `BUTTON_TOKEN` is configured.
