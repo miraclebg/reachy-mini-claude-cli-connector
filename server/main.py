@@ -15,6 +15,7 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import re
 import tempfile
 from urllib.parse import quote
 
@@ -22,7 +23,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 from config import settings
-from claude_client import ClaudeClient, ClaudeError
+from claude_client import ClaudeClient, ClaudeError, wants_look
 from stt import STT
 from tts import TTS, TTSError
 from vision import fetch_frame, transcript_wants_vision
@@ -157,46 +158,58 @@ async def chat(request: Request, audio: UploadFile = File(...)):
         # 2) STT
         transcript = stt.transcribe(in_path)
 
-        # 2b) Vision: only if the user asked to look, fetch a frame from the robot.
+        # 2b) Vision. Two ways in: a keyword fast-path grabs a frame up front; otherwise
+        #     Claude can request one itself by replying [LOOK] (handled after its answer).
         image_path = None
         camera_failed = False
         triggers = [t.strip() for t in settings.vision_triggers.split(",") if t.strip()]
-        if settings.vision_enabled and transcript and transcript_wants_vision(transcript, triggers):
-            base = settings.robot_camera_url or _robot_base_from_request(request, settings.camera_port)
-            frame = None
-            if base:
-                log.info("vision trigger — fetching frame from %s", base)
-                frame = fetch_frame(base, settings.camera_timeout_s)
-            if frame:
-                try:
-                    with open(img_file, "wb") as fh:
-                        fh.write(frame)
-                    image_path = "camera_view.jpg"  # relative to Claude's cwd (claude_working_dir)
-                    if settings.debug_vision_dir:  # keep a timestamped copy for diagnosis
-                        try:
-                            os.makedirs(settings.debug_vision_dir, exist_ok=True)
-                            import time as _t
-                            with open(os.path.join(settings.debug_vision_dir,
-                                                   _t.strftime("frame-%H%M%S.jpg")), "wb") as dbg:
-                                dbg.write(frame)
-                        except OSError:
-                            pass
-                except OSError as e:
-                    log.warning("could not save camera frame: %s", e)
-                    camera_failed = True
-            else:
-                # trigger heard but no usable frame → tell Claude the camera was unavailable
-                camera_failed = True
+        robot_base = settings.robot_camera_url or _robot_base_from_request(request, settings.camera_port)
 
-        # 3) if we heard nothing, answer without bothering Claude
+        def grab_frame():
+            """Fetch a frame from the robot, save it for Claude; return the rel path or None."""
+            frame = fetch_frame(robot_base, settings.camera_timeout_s) if robot_base else None
+            if not frame:
+                return None
+            try:
+                with open(img_file, "wb") as fh:
+                    fh.write(frame)
+            except OSError as e:
+                log.warning("could not save camera frame: %s", e)
+                return None
+            if settings.debug_vision_dir:  # keep a timestamped copy for diagnosis
+                try:
+                    os.makedirs(settings.debug_vision_dir, exist_ok=True)
+                    import time as _t
+                    with open(os.path.join(settings.debug_vision_dir, _t.strftime("frame-%H%M%S.jpg")), "wb") as dbg:
+                        dbg.write(frame)
+                except OSError:
+                    pass
+            return "camera_view.jpg"  # relative to Claude's cwd (claude_working_dir)
+
+        if settings.vision_enabled and transcript and transcript_wants_vision(transcript, triggers):
+            log.info("vision keyword — fetching frame")
+            image_path = grab_frame()
+            camera_failed = image_path is None
+
+        # 3) Ask Claude (empty transcript → skip it).
         if not transcript:
             reply = settings.msg_no_speech
         else:
             try:
                 reply = claude.ask(transcript, image_path=image_path, camera_failed=camera_failed)
+                # Claude-decided vision: no keyword fired, but Claude asked to see ([LOOK]).
+                if settings.vision_enabled and image_path is None and not camera_failed and wants_look(reply):
+                    log.info("Claude requested a look — fetching frame and re-asking")
+                    image_path = grab_frame()
+                    if image_path:
+                        reply = claude.ask("Снимката, която поиска, е готова.", image_path=image_path)
+                    else:
+                        reply = claude.ask("Камерата не върна изображение.", camera_failed=True)
             except ClaudeError as e:
                 log.error("Claude error: %s", e)
                 reply = settings.msg_error
+            # never speak the internal look marker if it slips through
+            reply = re.sub(r"\[look\]", "", reply, flags=re.IGNORECASE).strip() or settings.msg_error
 
         # 4) TTS
         try:

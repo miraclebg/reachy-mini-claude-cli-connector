@@ -69,8 +69,20 @@ VOICE_SYSTEM_PROMPT = (
     "unsure of, quietly look it up with web search and answer naturally — do NOT say "
     "you lack internet access or real-time data; you have both. Just don't read out "
     "URLs or sources aloud. If a tool genuinely fails or an action is blocked, say so "
-    "briefly."
+    "briefly. "
+    "You also have a CAMERA and can see what is physically in front of you. If answering "
+    "genuinely requires seeing something right now — reading text on an object someone "
+    "holds up, identifying or describing what is in view — and you have NOT been given a "
+    "photo this turn, reply with EXACTLY [LOOK] and nothing else; a photo will be taken "
+    "and you'll immediately be asked again with it. When a photo IS provided, just answer "
+    "from it. Never reply [LOOK] if you already have a photo, and never say the word LOOK "
+    "to the user."
 )
+
+
+def wants_look(text: str) -> bool:
+    """True if Claude asked the system to take a photo (emitted the [LOOK] marker)."""
+    return "[look]" in (text or "").lower()
 
 
 class ClaudeError(RuntimeError):
