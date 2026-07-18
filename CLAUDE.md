@@ -102,11 +102,13 @@ are all imported lazily.
 - **Session threading:** `claude_client.py` captures `.session_id` from the first
   turn's JSON and passes `--resume <id>` on every following turn. `ClaudeClient`
   holds this in memory — the server is single-conversation and stateful.
-- **Permission posture (now `auto` by default):** `--permission-mode auto`
-  auto-approves tool calls — so command execution, file edits, and web search
-  (`WebSearch`,`WebFetch`) are ON. Config: `CLAUDE_PERMISSION_MODE` (or `make run
-  PERMISSION=...`); `dontAsk` restores read-only (deny anything not in `allowed_tools`;
-  a denied tool doesn't crash the run, Claude just adapts).
+- **Permission posture:** mode is `auto` (auto-approves tools) via
+  `CLAUDE_PERMISSION_MODE` / `make run PERMISSION=...`; `dontAsk` restores prompting-free
+  read-only. But capability is really governed by `CLAUDE_ALLOWED_TOOLS`, a **hard
+  allow-list even under `auto`** (unlisted tool = blocked). **Shipped default is
+  read-only** (`Read,Glob,Grep,WebSearch,WebFetch`); command execution / edits require
+  explicitly adding `Bash,Edit,Write`. This workspace's gitignored `server/.env` opts in
+  to the capable set, which is why Reachy here can run shell/read the Desktop.
 - **Access control is the token, NOT the deny list.** `CLAUDE_DISALLOWED_TOOLS`
   (`rm`,`sudo`,`curl`,`wget`,`git push`) is bypassable defense-in-depth (`/bin/rm`,
   `find -delete`, `python -c os.remove`… slip past it) — a speed bump, not a boundary.

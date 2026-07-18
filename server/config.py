@@ -52,13 +52,15 @@ class Settings:
     # There's no human to approve prompts in a voice loop, so avoid interactive modes.
     permission_mode: str = os.environ.get("CLAUDE_PERMISSION_MODE", "auto")
     # Allowed tools. IMPORTANT: this is a hard allow-list even under `auto` — a tool
-    # NOT listed here is blocked, not auto-approved. So `Bash` must be present for
-    # Reachy to run shell commands (e.g. read your Desktop), and `Edit`/`Write` to
-    # change files. The default is fully capable (paired with `auto`); for a read-only
-    # posture set this to `Read,Glob,Grep,WebSearch,WebFetch` AND use `dontAsk`.
-    allowed_tools: str = os.environ.get(
-        "CLAUDE_ALLOWED_TOOLS", "Read,Edit,Write,Glob,Grep,Bash,WebSearch,WebFetch"
-    )
+    # NOT listed here is blocked, not auto-approved.
+    #
+    # The DEFAULT is read-only on purpose: a fresh checkout must not grant
+    # voice-triggered shell access. To let Reachy run commands / edit files, OPT IN
+    # explicitly in your .env by adding Bash,Edit,Write, e.g.
+    #     CLAUDE_ALLOWED_TOOLS=Read,Edit,Write,Glob,Grep,Bash,WebSearch,WebFetch
+    # When enabling Bash, prefer a sandbox (container/firejail/seccomp) or a command
+    # allow-list (e.g. Bash(ls:*),Bash(cat:*)) over unrestricted Bash.
+    allowed_tools: str = os.environ.get("CLAUDE_ALLOWED_TOOLS", "Read,Glob,Grep,WebSearch,WebFetch")
     # Belt-and-suspenders. Deny rules always win, even if the mode is loosened.
     disallowed_tools: str = os.environ.get(
         "CLAUDE_DISALLOWED_TOOLS",

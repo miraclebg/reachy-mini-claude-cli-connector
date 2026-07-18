@@ -147,7 +147,7 @@ precedence). Copy the `.env.example` templates and edit.
 | `CLAUDE_MODEL` | *(CLI default)* | `opus` \| `sonnet` \| `haiku` \| `fable`, or a full id. |
 | `CLAUDE_EFFORT` | *(CLI default)* | `low` \| `medium` \| `high` \| `xhigh` \| `max`. Lower = snappier replies. |
 | `CLAUDE_PERMISSION_MODE` | `auto` | `auto` (tools auto-approved) \| `dontAsk` (read-only) \| `plan`. See [Permissions](#permissions--security). |
-| `CLAUDE_ALLOWED_TOOLS` | `Read,Edit,Write,Glob,Grep,Bash,WebSearch,WebFetch` | **Hard allow-list, even under `auto`** — a tool not listed is blocked. `Bash` is required to run shell commands (e.g. read your Desktop). For read-only, trim to `Read,Glob,Grep,WebSearch,WebFetch` **and** use `dontAsk`. |
+| `CLAUDE_ALLOWED_TOOLS` | `Read,Glob,Grep,WebSearch,WebFetch` | **Hard allow-list, even under `auto`** — a tool not listed is blocked. Default is **read-only**. To let Reachy run shell commands / edit files, opt in: add `Bash,Edit,Write` (see [Permissions](#permissions--security)). |
 | `CLAUDE_DISALLOWED_TOOLS` | `Bash(rm *),Bash(sudo *),Bash(curl *),Bash(wget *),Bash(git push *)` | Best-effort deny list (defense-in-depth; **bypassable**, not a security boundary — see [Permissions](#permissions--security)). |
 | `CLAUDE_MAX_TURNS` | `6` | Cap on agent-loop turns per utterance. |
 | `CLAUDE_WORKING_DIR` | `./claude-workspace` | Where Claude runs (scopes `--resume` sessions). |
@@ -234,8 +234,12 @@ All app endpoints except `/health` require the token (via `?token=` or an
 ## Permissions & security
 
 The connector runs Claude with `--permission-mode auto`, which **auto-approves tool
-calls** (there's no human to click "approve" in a voice loop). In practice Claude can
-**read/edit files, run shell commands, and search the web**.
+calls** (there's no human to click "approve" in a voice loop) — but only for tools in
+`CLAUDE_ALLOWED_TOOLS`, which is a **hard allow-list even under `auto`**. The default
+list is **read-only** (`Read,Glob,Grep,WebSearch,WebFetch`): Claude can read/search
+files and search the web, but cannot run shell commands or edit files until you
+**opt in** by adding `Bash,Edit,Write` (see the config table). Enabling `Bash` is what
+turns on general command execution — do it deliberately.
 
 **Two layers matter — don't confuse them:**
 
