@@ -69,6 +69,7 @@ claude = ClaudeClient(
     disallowed_tools=settings.disallowed_tools,
     max_turns=settings.max_turns,
     timeout_s=settings.claude_timeout_s,
+    empty_reply=settings.msg_error,
 )
 
 # TTS is optional at startup so you can test /chat/text before setting up a voice.
@@ -145,13 +146,13 @@ async def chat(audio: UploadFile = File(...)):
 
         # 3) if we heard nothing, answer without bothering Claude
         if not transcript:
-            reply = "Sorry, I didn't catch that."
+            reply = settings.msg_no_speech
         else:
             try:
                 reply = claude.ask(transcript)
             except ClaudeError as e:
                 log.error("Claude error: %s", e)
-                reply = "Sorry, I had trouble thinking about that."
+                reply = settings.msg_error
 
         # 4) TTS
         try:

@@ -74,7 +74,9 @@ class ClaudeClient:
         disallowed_tools: str = "",
         max_turns: int = 6,
         timeout_s: int = 120,
+        empty_reply: str = "Sorry, I didn't come up with anything to say.",
     ) -> None:
+        self.empty_reply = empty_reply
         self.working_dir = working_dir
         self.claude_bin = claude_bin
         self.model = model
@@ -144,7 +146,7 @@ class ClaudeClient:
 
         reply = clean_for_speech(data.get("result") or "")
         if not reply:
-            reply = "Sorry, I didn't come up with anything to say."
+            reply = self.empty_reply
         log.info("claude reply: %r", reply)
         return reply
 

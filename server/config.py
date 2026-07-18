@@ -88,6 +88,12 @@ class Settings:
     # --- TTS (Piper, local) ---
     piper_model: str = os.environ.get("PIPER_MODEL", "")  # REQUIRED: path to a .onnx voice
 
+    # --- spoken fallbacks (set these to your language; English defaults) ---
+    # Spoken when we heard nothing / couldn't transcribe.
+    msg_no_speech: str = os.environ.get("MSG_NO_SPEECH", "Sorry, I didn't catch that.")
+    # Spoken when Claude errors or returns nothing.
+    msg_error: str = os.environ.get("MSG_ERROR", "Sorry, I had trouble with that.")
+
     # --- debug ---
     # If set, every incoming /chat utterance is saved here (raw, pre-normalization)
     # for diagnosing mic level/quality. Leave empty to disable.
