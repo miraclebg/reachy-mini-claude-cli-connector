@@ -82,6 +82,8 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
         def _history() -> Response:
             return Response(content=history.as_json(), media_type="application/json")
 
+        _logger = self.logger  # app logger, captured for the nested driver class
+
         class _ReachyDriver:
             """Adapts reachy_mini to the MovementPlayer driver protocol."""
             def goto(self, pose: dict, antennas, duration: float) -> None:
@@ -96,7 +98,7 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
                 try:
                     reachy_mini.set_body_rotation(degrees, duration=duration)  # type: ignore[attr-defined]
                 except AttributeError:
-                    self.logger.warning("no body-rotation API yet; approximating with head yaw")
+                    _logger.warning("no body-rotation API yet; approximating with head yaw")
                     reachy_mini.goto_target(
                         create_head_pose(yaw=degrees, degrees=True, mm=False), duration=duration)
 
