@@ -41,6 +41,17 @@ def _request_token(request: Request) -> str:
     return request.headers.get("x-auth-token", "")
 
 
+def _robot_base_from_request(request: Request, port: int) -> str | None:
+    """Best-effort robot base URL from the connection's source IP. None if the ASGI
+    transport doesn't expose the client (then vision degrades gracefully)."""
+    if request.client is None:
+        return None
+    host = request.client.host
+    if ":" in host:  # IPv6 literal → bracket it
+        host = f"[{host}]"
+    return f"http://{host}:{port}"
+
+
 # Auth is important here because Claude runs with command-execution permissions and
 # the server may listen on 0.0.0.0. /health stays open for readiness probes (it
 # exposes only config metadata, no conversation content or command surface).
@@ -151,14 +162,21 @@ async def chat(request: Request, audio: UploadFile = File(...)):
         camera_failed = False
         triggers = [t.strip() for t in settings.vision_triggers.split(",") if t.strip()]
         if settings.vision_enabled and transcript and transcript_wants_vision(transcript, triggers):
-            base = settings.robot_camera_url or f"http://{request.client.host}:{settings.camera_port}"
-            log.info("vision trigger — fetching frame from %s", base)
-            frame = fetch_frame(base, settings.camera_timeout_s)
+            base = settings.robot_camera_url or _robot_base_from_request(request, settings.camera_port)
+            frame = None
+            if base:
+                log.info("vision trigger — fetching frame from %s", base)
+                frame = fetch_frame(base, settings.camera_timeout_s)
             if frame:
-                with open(img_file, "wb") as fh:
-                    fh.write(frame)
-                image_path = "camera_view.jpg"  # relative to Claude's cwd (claude_working_dir)
+                try:
+                    with open(img_file, "wb") as fh:
+                        fh.write(frame)
+                    image_path = "camera_view.jpg"  # relative to Claude's cwd (claude_working_dir)
+                except OSError as e:
+                    log.warning("could not save camera frame: %s", e)
+                    camera_failed = True
             else:
+                # trigger heard but no usable frame → tell Claude the camera was unavailable
                 camera_failed = True
 
         # 3) if we heard nothing, answer without bothering Claude
