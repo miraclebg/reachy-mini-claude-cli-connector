@@ -86,10 +86,12 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
             # A frame is only ever requested on a "look" command. Rise up tall and
             # straight to face the subject, with a quick antenna flourish (tilt →
             # straighten) that reads as "getting ready to take the picture".
-            # z=35mm raises the head near its mechanical max (tested safe with margin).
+            # z=35mm raises the head near its mechanical max (tested safe with margin);
+            # pitch=-15 tips the gaze UP to level (pitch=0 rests looking down); yaw/roll
+            # 0 keep it centered.
             def tall(antennas):
                 return reachy_mini.goto_target(
-                    create_head_pose(z=35, mm=True), antennas=antennas, duration=0.28)
+                    create_head_pose(z=35, mm=True, pitch=-15), antennas=antennas, duration=0.28)
             try:
                 tall([0.8, -0.8])   # rise + cock the antennas
                 time.sleep(0.32)
