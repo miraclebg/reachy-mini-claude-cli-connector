@@ -29,3 +29,6 @@ claude-workspace/
 *.swp
 .idea/
 .vscode/
+
+# subagent-driven-development scratch
+.superpowers/
