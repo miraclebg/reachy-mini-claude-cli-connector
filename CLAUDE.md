@@ -92,7 +92,10 @@ are all imported lazily.
 
 ## Key facts & gotchas
 
-- **Not a git repo.** `git init` first if the user wants version control.
+- **Git repo** with remote `origin`
+  (`github.com:miraclebg/reachy-mini-claude-cli-connector`), default branch `main`.
+  Venvs, `voices/` (Piper models), `.env`, and `claude-workspace/` are gitignored —
+  regenerated locally, never committed.
 - **Claude runs from `claude-workspace/`** (`CLAUDE_WORKING_DIR`). This is deliberate:
   `--resume` is scoped per-directory (so the session threads), and it scopes Claude's
   filesystem blast radius. Don't change this without understanding both effects.
