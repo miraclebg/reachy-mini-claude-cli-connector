@@ -84,11 +84,19 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
         @app.get("/frame")
         def _frame() -> Response:
             # A frame is only ever requested on a "look" command, so first center and
-            # straighten the head to face the subject, let it settle, then capture.
+            # straighten the head to face the subject.
             try:
                 reachy_mini.goto_target(create_head_pose(), antennas=[0.0, 0.0], duration=0.5)
-                time.sleep(0.6)
-                jpeg = reachy_mini.media.get_frame_jpeg()
+                # CRITICAL: wait for the head to fully settle AND for the camera
+                # pipeline's latency to clear. get_frame_jpeg() returns a buffered frame,
+                # so grabbing too soon (or mid-motion) yields a LAGGED frame showing the
+                # PREVIOUS scene. Then flush several frames and keep the last, so we
+                # return the current, stable view.
+                time.sleep(1.5)
+                jpeg = None
+                for _ in range(10):
+                    jpeg = reachy_mini.media.get_frame_jpeg()
+                    time.sleep(0.08)
             except Exception as e:  # never 500 — the connector treats non-200 as "no frame"
                 self.logger.warning("frame capture failed: %s", e)
                 return Response(status_code=503, content=b"frame error")
