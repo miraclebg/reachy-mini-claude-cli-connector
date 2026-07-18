@@ -28,7 +28,7 @@ from reachy_app.config import settings
 from reachy_app.connector_client import ConnectorClient
 from reachy_app.loop import ConversationLoop
 from reachy_app.movement import (
-    MovementPlayer, resolve, PRESETS, HEAD_LIMITS, BASE_LIMIT, MAX_KEYFRAMES, MAX_TOTAL_S,
+    MovementPlayer, resolve, PRESETS, HEAD_LIMITS, BASE_LIMIT, MAX_KEYFRAMES, MAX_TOTAL_S, MIN_DUR,
 )
 from reachy_app.vad import SilenceEndpointer
 
@@ -249,6 +249,31 @@ def test_movement_base_keyframe() -> None:
     check("base +deg (left) within limit", 0 < bases[0][1] <= BASE_LIMIT[1], str(bases[0]))
 
 
+def test_movement_velocity_floor_across_calls() -> None:
+    print("movement: velocity floor accounts for the pose already held")
+    p, d = _player()
+    p.play("look_left")   # ends held at yaw=+35
+    p.play("look_right")  # from +35 to -35 is a 70deg swing, not 35
+    gotos = [c for c in d.calls if c[0] == "goto"]
+    dur = gotos[-1][3]
+    expected_floor = 70.0 / 120.0
+    check("second goto duration floored for the true (70deg) swing",
+          dur >= expected_floor - 1e-6, f"dur={dur} expected>={expected_floor}")
+
+
+def test_movement_tolerates_bad_values() -> None:
+    print("movement: non-numeric keyframe values are dropped, not raised")
+    p, d = _player()
+    n = p.play([{"yaw": "left", "pitch": 10, "dur": "soon"}])
+    gotos = [c for c in d.calls if c[0] == "goto"]
+    check("does not raise and runs one frame", n == 1 and len(gotos) == 1, str(d.calls))
+    if gotos:
+        _, pose, _, dur = gotos[0]
+        check("bad yaw dropped", "yaw" not in pose, str(pose))
+        check("good pitch kept and clamped", pose.get("pitch") == 10, str(pose))
+        check("bad dur falls back to a sane floor", dur >= MIN_DUR - 1e-6, str(dur))
+
+
 def server_up() -> bool:
     try:
         _client().health()
@@ -302,6 +327,7 @@ def main() -> int:
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
         test_movement_caps_sequence, test_movement_base_keyframe,
+        test_movement_velocity_floor_across_calls, test_movement_tolerates_bad_values,
         test_full_turn,
     ):
         t()

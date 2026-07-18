@@ -16,7 +16,6 @@ the Mac with no robot.
 """
 from __future__ import annotations
 
-import json
 import logging
 import time
 
@@ -70,27 +69,53 @@ def _velocity_floor(prev: dict, new: dict) -> float:
     return max(deg / MAX_SPEED_DEG, m / MAX_SPEED_M)
 
 
+def _as_float(v) -> float | None:
+    """Best-effort numeric coercion; None if v isn't a usable number."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _clamp_keyframe(f: dict, prev: dict) -> tuple[dict, dict]:
-    """Clamp one keyframe against the safe limits; return (clamped, new_pose_state)."""
+    """Clamp one keyframe against the safe limits; return (clamped, new_pose_state).
+
+    Axes with non-numeric values are skipped (dropped from the clamped frame)
+    rather than raising, per the module's "Claude may ask for anything" contract.
+    """
     cf: dict = {}
     new_prev = dict(prev)
     for ax, (lo, hi) in HEAD_LIMITS.items():
         if ax in f:
-            cf[ax] = new_prev[ax] = _clamp(float(f[ax]), lo, hi)
+            val = _as_float(f[ax])
+            if val is not None:
+                cf[ax] = new_prev[ax] = _clamp(val, lo, hi)
     for ax, (lo, hi) in TRANS_LIMITS.items():
         if ax in f:
-            cf[ax] = new_prev[ax] = _clamp(float(f[ax]), lo, hi)
+            val = _as_float(f[ax])
+            if val is not None:
+                cf[ax] = new_prev[ax] = _clamp(val, lo, hi)
     if "base" in f:
-        cf["base"] = new_prev["base"] = _clamp(float(f["base"]), *BASE_LIMIT)
+        val = _as_float(f["base"])
+        if val is not None:
+            cf["base"] = new_prev["base"] = _clamp(val, *BASE_LIMIT)
     if "ant" in f and isinstance(f["ant"], (list, tuple)) and len(f["ant"]) == 2:
-        cf["ant"] = [_clamp(float(f["ant"][0]), *ANT_LIMIT), _clamp(float(f["ant"][1]), *ANT_LIMIT)]
-    requested = float(f.get("dur", MIN_DUR))
+        a0, a1 = _as_float(f["ant"][0]), _as_float(f["ant"][1])
+        if a0 is not None and a1 is not None:
+            cf["ant"] = [_clamp(a0, *ANT_LIMIT), _clamp(a1, *ANT_LIMIT)]
+    requested = _as_float(f.get("dur", MIN_DUR))
+    if requested is None:
+        requested = MIN_DUR
     cf["dur"] = max(requested, _velocity_floor(prev, new_prev), MIN_DUR)
     return cf, new_prev
 
 
-def resolve(spec) -> list[dict]:
-    """A preset name or a keyframe list -> clamped, capped keyframes ([] if invalid)."""
+def resolve(spec, start_pose: dict | None = None) -> list[dict]:
+    """A preset name or a keyframe list -> clamped, capped keyframes ([] if invalid).
+
+    `start_pose` seeds the velocity floor with the pose the robot is already
+    holding (e.g. the end of a prior orientation preset); defaults to neutral.
+    """
     if isinstance(spec, str):
         frames = [dict(f) for f in PRESETS.get(spec.strip(), [])]
     elif isinstance(spec, list):
@@ -99,7 +124,7 @@ def resolve(spec) -> list[dict]:
         frames = []
     frames = frames[:MAX_KEYFRAMES]
     out: list[dict] = []
-    prev = dict(_NEUTRAL)
+    prev = dict(start_pose) if start_pose else dict(_NEUTRAL)
     total = 0.0
     for f in frames:
         cf, prev = _clamp_keyframe(f, prev)
@@ -122,9 +147,10 @@ class MovementPlayer:
     def __init__(self, driver, sleep=time.sleep) -> None:
         self.driver = driver
         self._sleep = sleep
+        self._pose = dict(_NEUTRAL)  # last commanded absolute head+base pose
 
     def play(self, spec) -> int:
-        frames = resolve(spec)
+        frames = resolve(spec, self._pose)
         for kf in frames:
             if "base" in kf:
                 self.driver.rotate_base(kf["base"], kf["dur"])
@@ -133,5 +159,8 @@ class MovementPlayer:
             if pose or ant is not None:
                 self.driver.goto(pose, ant, kf["dur"])
             self._sleep(kf["dur"])
+            for ax in (*POSE_AXES, "base"):
+                if ax in kf:
+                    self._pose[ax] = kf[ax]
         log.info("played %d keyframe(s) for spec=%r", len(frames), spec if isinstance(spec, str) else "<keyframes>")
         return len(frames)
