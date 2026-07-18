@@ -27,6 +27,7 @@ from claude_client import ClaudeClient, ClaudeError, wants_look
 from stt import STT
 from tts import TTS, TTSError
 from vision import fetch_frame, transcript_wants_vision
+from movement import parse_move, wants_move, post_move
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("connector")
@@ -165,9 +166,9 @@ async def chat(request: Request, audio: UploadFile = File(...)):
         triggers = [t.strip() for t in settings.vision_triggers.split(",") if t.strip()]
         robot_base = settings.robot_camera_url or _robot_base_from_request(request, settings.camera_port)
 
-        def grab_frame():
+        def grab_frame(hold=False):
             """Fetch a frame from the robot, save it for Claude; return the rel path or None."""
-            frame = fetch_frame(robot_base, settings.camera_timeout_s) if robot_base else None
+            frame = fetch_frame(robot_base, settings.camera_timeout_s, hold=hold) if robot_base else None
             if not frame:
                 return None
             try:
@@ -197,18 +198,32 @@ async def chat(request: Request, audio: UploadFile = File(...)):
         else:
             try:
                 reply = claude.ask(transcript, image_path=image_path, camera_failed=camera_failed)
-                # Claude-decided vision: no keyword fired, but Claude asked to see ([LOOK]).
+
+                # 3a) Movement: Claude may direct a body move (named preset or keyframes).
+                #     Do it FIRST so a co-requested photo is taken from the moved pose.
+                moved = False
+                if settings.movement_enabled:
+                    move_spec, reply = parse_move(reply)
+                    if move_spec is not None and robot_base:
+                        moved = post_move(robot_base, move_spec, settings.move_timeout_s)
+
+                # 3b) Claude-decided vision (possibly after a move): grab a frame and re-ask.
                 if settings.vision_enabled and image_path is None and not camera_failed and wants_look(reply):
-                    log.info("Claude requested a look — fetching frame and re-asking")
-                    image_path = grab_frame()
+                    log.info("Claude requested a look — fetching frame (hold=%s) and re-asking", moved)
+                    image_path = grab_frame(hold=moved)
                     if image_path:
                         reply = claude.ask("Снимката, която поиска, е готова.", image_path=image_path)
                     else:
                         reply = claude.ask("Камерата не върна изображение.", camera_failed=True)
+                    # A move requested in the describe turn is rare but strip+run it too.
+                    if settings.movement_enabled:
+                        move_spec2, reply = parse_move(reply)
+                        if move_spec2 is not None and robot_base:
+                            post_move(robot_base, move_spec2, settings.move_timeout_s)
             except ClaudeError as e:
                 log.error("Claude error: %s", e)
                 reply = settings.msg_error
-            # never speak the internal look marker if it slips through
+            # never speak the internal markers if they slip through
             reply = re.sub(r"\[look\]", "", reply, flags=re.IGNORECASE).strip() or settings.msg_error
 
         # 4) TTS

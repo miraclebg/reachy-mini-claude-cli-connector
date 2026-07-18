@@ -114,5 +114,9 @@ class Settings:
     # Explicit robot base URL for /frame; empty = auto-discover from the request.
     robot_camera_url: str = os.environ.get("ROBOT_CAMERA_URL", "")
 
+    # --- movement (voice-directed body motion) ---
+    movement_enabled: bool = _as_bool(os.environ.get("MOVEMENT_ENABLED", "true"))
+    move_timeout_s: float = float(os.environ.get("MOVE_TIMEOUT_S", "12"))  # > player MAX_TOTAL_S
+
 
 settings = Settings()

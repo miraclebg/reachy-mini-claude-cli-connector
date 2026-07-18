@@ -20,9 +20,13 @@ def transcript_wants_vision(text: str, triggers: list[str]) -> bool:
     return any(t and t.lower() in low for t in triggers)
 
 
-def fetch_frame(base_url: str, timeout_s: float = 4.0) -> bytes | None:
-    """GET {base_url}/frame -> JPEG bytes, or None on any failure."""
-    url = base_url.rstrip("/") + "/frame"
+def fetch_frame(base_url: str, timeout_s: float = 4.0, hold: bool = False) -> bytes | None:
+    """GET {base_url}/frame -> JPEG bytes, or None on any failure.
+
+    hold=True adds ?hold=1 so the robot captures from its CURRENT (already-moved) pose
+    instead of rising to the default photo pose.
+    """
+    url = base_url.rstrip("/") + "/frame" + ("?hold=1" if hold else "")
     try:
         r = requests.get(url, timeout=timeout_s)
     except requests.RequestException as e:
