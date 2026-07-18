@@ -302,15 +302,15 @@ The connector itself is exercised with `server/smoke_test.py` (see `server/READM
 
 ## Deploying to the actual Reachy Mini
 
-1. On the **Mac**, run just the connector: `make server` (note the Mac's LAN IP).
-2. On the **Pi**, install `reachy_app`'s deps + the `reachy_mini` SDK, set
-   `CONNECTOR_URL=http://<mac-ip>:8080` in `reachy_app/.env`, and run:
-   `python -m reachy_app.main --backend reachy`.
-3. Optional: add a Picovoice key + a "Hey Reachy" `.ppn` to enable the wake word.
+**Recommended: install it as a dashboard app** (run / stop / uninstall from the Reachy
+Mac / iPhone app) — see **[INSTALL.md](INSTALL.md)**. In short: on the Mac run the
+connector (`make server`); on the robot, clone the repo, drop a
+`~/.config/reachy-mini-claude/config.env` with your `CONNECTOR_URL` + `CONNECTOR_TOKEN`,
+and `pip install .` into `/venvs/apps_venv`. It then appears in the dashboard.
 
-The robot backend is written against Pollen's documented SDK API; gesture magnitudes and
-on-robot wake-word mic routing are the things to tune on first hardware run (see
-`reachy_app/README.md` → *On-robot follow-ups*).
+**Alternative (dev / no dashboard):** run the standalone directly on the Pi —
+`python -m reachy_app.main --backend reachy` — with `reachy_app/.env` pointing at the
+Mac. Optionally add a Picovoice key + a "Hey Reachy" `.ppn` for the wake word.
 
 ---
 
