@@ -57,7 +57,7 @@ async def require_token(request: Request, call_next):
 os.makedirs(settings.claude_working_dir, exist_ok=True)
 
 stt = STT(settings.whisper_model, settings.whisper_device, settings.whisper_compute,
-          settings.whisper_language, settings.whisper_vad_threshold)
+          settings.whisper_language, settings.whisper_vad_filter, settings.whisper_vad_threshold)
 
 claude = ClaudeClient(
     working_dir=settings.claude_working_dir,
@@ -124,8 +124,21 @@ async def chat(audio: UploadFile = File(...)):
     fd, in_path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
     try:
+        data = await audio.read()
         with open(in_path, "wb") as fh:
-            fh.write(await audio.read())
+            fh.write(data)
+
+        # (debug) keep the raw utterance for inspection if enabled
+        if settings.debug_audio_dir:
+            try:
+                os.makedirs(settings.debug_audio_dir, exist_ok=True)
+                import time as _t
+                name = _t.strftime("utt-%H%M%S") + f"-{len(data)}.wav"
+                with open(os.path.join(settings.debug_audio_dir, name), "wb") as dbg:
+                    dbg.write(data)
+                log.info("saved debug audio: %s", name)
+            except OSError as e:
+                log.warning("could not save debug audio: %s", e)
 
         # 2) STT
         transcript = stt.transcribe(in_path)

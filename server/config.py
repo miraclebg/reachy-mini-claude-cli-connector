@@ -16,6 +16,10 @@ except Exception:
     pass
 
 
+def _as_bool(v: str) -> bool:
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
 def _default_workspace() -> str:
     # The fixed directory Claude runs in. It scopes the session lookup (--resume
     # is per-directory) AND scopes Claude's filesystem blast radius.
@@ -75,12 +79,19 @@ class Settings:
     # Force the spoken language (ISO code, e.g. 'bg'). Empty = auto-detect (less
     # reliable). Must use a multilingual model (not the *.en ones) for non-English.
     whisper_language: str = os.environ.get("WHISPER_LANGUAGE", "")
-    # VAD aggressiveness (0..1). Lower keeps more audio — important for a quiet robot
-    # mic (the default 0.5 over-trims and whisper then hallucinates). 0.2 is gentle.
+    # VAD (silence trimming). OFF by default: the push-to-talk button delimits the
+    # utterance, and faster-whisper's VAD was measurably mangling the robot audio.
+    # Only enable if you switch to an always-listening path without a button.
+    whisper_vad_filter: bool = _as_bool(os.environ.get("WHISPER_VAD_FILTER", "false"))
     whisper_vad_threshold: float = float(os.environ.get("WHISPER_VAD_THRESHOLD", "0.2"))
 
     # --- TTS (Piper, local) ---
     piper_model: str = os.environ.get("PIPER_MODEL", "")  # REQUIRED: path to a .onnx voice
+
+    # --- debug ---
+    # If set, every incoming /chat utterance is saved here (raw, pre-normalization)
+    # for diagnosing mic level/quality. Leave empty to disable.
+    debug_audio_dir: str = os.environ.get("DEBUG_AUDIO_DIR", "")
 
 
 settings = Settings()
