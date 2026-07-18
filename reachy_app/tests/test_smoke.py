@@ -27,6 +27,9 @@ from reachy_app.button_server import ButtonServer, StatusState
 from reachy_app.config import settings
 from reachy_app.connector_client import ConnectorClient
 from reachy_app.loop import ConversationLoop
+from reachy_app.movement import (
+    MovementPlayer, resolve, PRESETS, HEAD_LIMITS, BASE_LIMIT, MAX_KEYFRAMES, MAX_TOTAL_S,
+)
 from reachy_app.vad import SilenceEndpointer
 
 SERVER = "http://localhost:8080"
@@ -177,6 +180,75 @@ def test_button_auth() -> None:
         srv.stop()
 
 
+class FakeDriver:
+    """Records driver calls instead of moving a robot."""
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def goto(self, pose, antennas, duration) -> None:
+        self.calls.append(("goto", dict(pose), antennas, duration))
+
+    def rotate_base(self, degrees, duration) -> None:
+        self.calls.append(("base", degrees, duration))
+
+
+def _player():
+    d = FakeDriver()
+    return MovementPlayer(d, sleep=lambda _s: None), d
+
+
+def test_movement_preset_look_left() -> None:
+    print("movement: named preset resolves to a head move")
+    p, d = _player()
+    n = p.play("look_left")
+    gotos = [c for c in d.calls if c[0] == "goto"]
+    check("look_left runs one goto", n == 1 and len(gotos) == 1, str(d.calls))
+    check("look_left sets +yaw (left)", gotos[0][1].get("yaw", 0) > 0, str(gotos[0]))
+    check("duration respects min", gotos[0][3] >= 0.15, str(gotos[0][3]))
+
+
+def test_movement_clamps_out_of_range() -> None:
+    print("movement: out-of-range axis is clamped to the safe window")
+    p, d = _player()
+    p.play([{"yaw": 999, "dur": 1.0}])
+    _, pose, _, _ = [c for c in d.calls if c[0] == "goto"][0]
+    check("yaw clamped to max", pose["yaw"] == HEAD_LIMITS["yaw"][1], str(pose))
+
+
+def test_movement_velocity_floor() -> None:
+    print("movement: tiny duration on a big swing is raised by the velocity floor")
+    p, d = _player()
+    p.play([{"yaw": 40, "dur": 0.01}])
+    dur = [c for c in d.calls if c[0] == "goto"][0][3]
+    check("duration floored by velocity", dur >= 40.0 / 120.0 - 1e-6, str(dur))
+
+
+def test_movement_unknown_preset_is_noop() -> None:
+    print("movement: unknown preset name does nothing")
+    p, d = _player()
+    n = p.play("banana")
+    check("no frames, no calls", n == 0 and d.calls == [], str(d.calls))
+
+
+def test_movement_caps_sequence() -> None:
+    print("movement: a runaway sequence is capped by count and total duration")
+    p, d = _player()
+    p.play([{"yaw": 1, "dur": 0.5}] * 100)
+    gotos = [c for c in d.calls if c[0] == "goto"]
+    total = sum(c[3] for c in gotos)
+    check("keyframe count capped", len(gotos) <= MAX_KEYFRAMES, str(len(gotos)))
+    check("total duration capped", total <= MAX_TOTAL_S + 1e-6, str(total))
+
+
+def test_movement_base_keyframe() -> None:
+    print("movement: rotate preset drives the base axis")
+    p, d = _player()
+    p.play("rotate_left")
+    bases = [c for c in d.calls if c[0] == "base"]
+    check("one base call", len(bases) == 1, str(d.calls))
+    check("base +deg (left) within limit", 0 < bases[0][1] <= BASE_LIMIT[1], str(bases[0]))
+
+
 def server_up() -> bool:
     try:
         _client().health()
@@ -225,7 +297,13 @@ def test_full_turn() -> None:
 
 
 def main() -> int:
-    for t in (test_wav_roundtrip, test_endpointer, test_button_server, test_button_auth, test_full_turn):
+    for t in (
+        test_wav_roundtrip, test_endpointer, test_button_server, test_button_auth,
+        test_movement_preset_look_left, test_movement_clamps_out_of_range,
+        test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
+        test_movement_caps_sequence, test_movement_base_keyframe,
+        test_full_turn,
+    ):
         t()
     print(f"\n{_passed} passed, {_failed} failed")
     return 1 if _failed else 0
