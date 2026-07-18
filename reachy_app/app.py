@@ -35,6 +35,7 @@ from .button_server import ButtonState, History, StatusState
 from .config import settings
 from .connector_client import ConnectorClient
 from .loop import ConversationLoop
+from .movement import MovementPlayer
 
 
 class ReachyClaudeConnectorApp(ReachyMiniApp):
@@ -81,21 +82,51 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
         def _history() -> Response:
             return Response(content=history.as_json(), media_type="application/json")
 
+        class _ReachyDriver:
+            """Adapts reachy_mini to the MovementPlayer driver protocol."""
+            def goto(self, pose: dict, antennas, duration: float) -> None:
+                head = create_head_pose(degrees=True, mm=False, **pose)
+                kw = {} if antennas is None else {"antennas": list(antennas)}
+                reachy_mini.goto_target(head, duration=duration, **kw)
+
+            def rotate_base(self, degrees: float, duration: float) -> None:
+                # VERIFY-ON-HARDWARE: confirm the Reachy Mini body-rotation API.
+                # Best effort: try a dedicated body call, else approximate with head yaw
+                # so the robot still turns (and nothing crashes) until the API is confirmed.
+                try:
+                    reachy_mini.set_body_rotation(degrees, duration=duration)  # type: ignore[attr-defined]
+                except AttributeError:
+                    self.logger.warning("no body-rotation API yet; approximating with head yaw")
+                    reachy_mini.goto_target(
+                        create_head_pose(yaw=degrees, degrees=True, mm=False), duration=duration)
+
+        player = MovementPlayer(_ReachyDriver())
+
+        @app.post("/move")
+        def _move(payload: dict) -> dict:
+            spec = payload.get("spec")
+            try:
+                frames = player.play(spec)
+            except Exception as e:  # never 500 — the connector treats non-200 as "no move"
+                self.logger.warning("move failed: %s", e)
+                return {"ok": False, "frames": 0}
+            return {"ok": True, "frames": frames}
+
         @app.get("/frame")
-        def _frame() -> Response:
-            # A frame is only ever requested on a "look" command. Rise up tall and
-            # straight to face the subject, with a quick antenna flourish (tilt →
-            # straighten) that reads as "getting ready to take the picture".
-            # Photo pose the operator hand-set on the robot (read back from it):
-            # leaned back ~27mm, gaze up ~12.5°, upright, at rest height.
+        def _frame(hold: int = 0) -> Response:
+            # Normally a frame is requested on a bare "look" — rise up to the photo pose
+            # with an antenna flourish. But when a MOVE already aimed the head (e.g.
+            # "погледни наляво и ми кажи какво виждаш"), hold=1 keeps that pose and just
+            # settles + flushes, so the photo is of what the move pointed at.
             def look(antennas):
                 return reachy_mini.goto_target(
                     create_head_pose(x=-0.027, y=-0.003, z=0.0, roll=1.5, pitch=-12.5, yaw=0.7),
                     antennas=antennas, duration=0.4)
             try:
-                look([0.8, -0.8])   # cock the antennas
-                time.sleep(0.32)
-                look([0.0, 0.0])    # snap them straight
+                if not hold:
+                    look([0.8, -0.8])   # cock the antennas
+                    time.sleep(0.32)
+                    look([0.0, 0.0])    # snap them straight
                 # CRITICAL: settle the head AND let the camera pipeline's latency clear.
                 # get_frame_jpeg() returns a buffered frame, so grabbing too soon (or
                 # mid-motion) yields a LAGGED frame of the PREVIOUS scene. Then flush
