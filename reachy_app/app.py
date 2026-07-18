@@ -83,15 +83,21 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
 
         @app.get("/frame")
         def _frame() -> Response:
-            # A frame is only ever requested on a "look" command, so first center and
-            # straighten the head to face the subject.
+            # A frame is only ever requested on a "look" command. Rise up tall and
+            # straight to face the subject, with a quick antenna flourish (tilt →
+            # straighten) that reads as "getting ready to take the picture".
+            # z=35mm raises the head near its mechanical max (tested safe with margin).
+            def tall(antennas):
+                return reachy_mini.goto_target(
+                    create_head_pose(z=35, mm=True), antennas=antennas, duration=0.28)
             try:
-                reachy_mini.goto_target(create_head_pose(), antennas=[0.0, 0.0], duration=0.5)
-                # CRITICAL: wait for the head to fully settle AND for the camera
-                # pipeline's latency to clear. get_frame_jpeg() returns a buffered frame,
-                # so grabbing too soon (or mid-motion) yields a LAGGED frame showing the
-                # PREVIOUS scene. Then flush several frames and keep the last, so we
-                # return the current, stable view.
+                tall([0.8, -0.8])   # rise + cock the antennas
+                time.sleep(0.32)
+                tall([0.0, 0.0])    # snap the antennas straight
+                # CRITICAL: settle the head AND let the camera pipeline's latency clear.
+                # get_frame_jpeg() returns a buffered frame, so grabbing too soon (or
+                # mid-motion) yields a LAGGED frame of the PREVIOUS scene. Then flush
+                # several frames and keep the last → the current, stable view.
                 time.sleep(1.5)
                 jpeg = None
                 for _ in range(10):
