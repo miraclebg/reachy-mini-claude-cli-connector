@@ -56,7 +56,8 @@ async def require_token(request: Request, call_next):
 # --- init the pipeline once ---
 os.makedirs(settings.claude_working_dir, exist_ok=True)
 
-stt = STT(settings.whisper_model, settings.whisper_device, settings.whisper_compute, settings.whisper_language)
+stt = STT(settings.whisper_model, settings.whisper_device, settings.whisper_compute,
+          settings.whisper_language, settings.whisper_vad_threshold)
 
 claude = ClaudeClient(
     working_dir=settings.claude_working_dir,

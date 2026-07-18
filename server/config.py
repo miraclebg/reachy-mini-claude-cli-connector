@@ -75,6 +75,9 @@ class Settings:
     # Force the spoken language (ISO code, e.g. 'bg'). Empty = auto-detect (less
     # reliable). Must use a multilingual model (not the *.en ones) for non-English.
     whisper_language: str = os.environ.get("WHISPER_LANGUAGE", "")
+    # VAD aggressiveness (0..1). Lower keeps more audio — important for a quiet robot
+    # mic (the default 0.5 over-trims and whisper then hallucinates). 0.2 is gentle.
+    whisper_vad_threshold: float = float(os.environ.get("WHISPER_VAD_THRESHOLD", "0.2"))
 
     # --- TTS (Piper, local) ---
     piper_model: str = os.environ.get("PIPER_MODEL", "")  # REQUIRED: path to a .onnx voice
