@@ -45,6 +45,16 @@ def parse_move(text: str) -> tuple[object | None, str]:
     return None, t
 
 
+_STRIP_RE = re.compile(r"\[move\].*?\[/move\]|\[/?move\b[^\]]*\]", re.IGNORECASE | re.DOTALL)
+
+
+def strip_markers(text: str) -> str:
+    """Remove any movement marker — block form (incl. its JSON payload) or named form —
+    so it never reaches TTS. Independent of parse_move / movement_enabled. Leaves [LOOK]
+    untouched (main.py strips that separately)."""
+    return _STRIP_RE.sub("", text or "")
+
+
 def wants_move(text: str) -> bool:
     t = text or ""
     return bool(_MOVE_BLOCK_RE.search(t) or _MOVE_NAME_RE.search(t))

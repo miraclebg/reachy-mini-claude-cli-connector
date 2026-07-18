@@ -27,7 +27,7 @@ from claude_client import ClaudeClient, ClaudeError, wants_look
 from stt import STT
 from tts import TTS, TTSError
 from vision import fetch_frame, transcript_wants_vision
-from movement import parse_move, wants_move, post_move
+from movement import parse_move, post_move, strip_markers
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("connector")
@@ -187,7 +187,7 @@ async def chat(request: Request, audio: UploadFile = File(...)):
                     pass
             return "camera_view.jpg"  # relative to Claude's cwd (claude_working_dir)
 
-        if settings.vision_enabled and transcript and transcript_wants_vision(transcript, triggers):
+        if settings.vision_enabled and not settings.movement_enabled and transcript and transcript_wants_vision(transcript, triggers):
             log.info("vision keyword — fetching frame")
             image_path = grab_frame()
             camera_failed = image_path is None
@@ -224,6 +224,7 @@ async def chat(request: Request, audio: UploadFile = File(...)):
                 log.error("Claude error: %s", e)
                 reply = settings.msg_error
             # never speak the internal markers if they slip through
+            reply = strip_markers(reply)
             reply = re.sub(r"\[look\]", "", reply, flags=re.IGNORECASE).strip() or settings.msg_error
 
         # 4) TTS
