@@ -79,6 +79,13 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
         def _history() -> Response:
             return Response(content=history.as_json(), media_type="application/json")
 
+        @app.get("/frame")
+        def _frame() -> Response:
+            jpeg = reachy_mini.media.get_frame_jpeg()
+            if not jpeg:
+                return Response(status_code=503, content=b"no frame")
+            return Response(content=bytes(jpeg), media_type="image/jpeg")
+
         backend = ReachyMiniBackend(mini=reachy_mini)
         loop = ConversationLoop(
             backend=backend,
