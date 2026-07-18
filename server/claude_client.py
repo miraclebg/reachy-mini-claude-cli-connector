@@ -37,6 +37,22 @@ def clean_for_speech(text: str) -> str:
     text = _BARE_URL_RE.sub("", text)          # remove any stray bare URLs
     return text.strip()
 
+
+def _augment_prompt(prompt: str, image_path: str | None, camera_failed: bool) -> str:
+    """Add a camera note so Claude looks at (or acknowledges the absence of) a frame."""
+    if image_path:
+        return (
+            prompt + f"\n\n(A photo from your camera is saved at {image_path} in your "
+            "working directory. Use the Read tool to look at it, then answer the user's "
+            "question about what you see.)"
+        )
+    if camera_failed:
+        return (
+            prompt + "\n\n(You tried to look but the camera returned no image; briefly "
+            "tell the user you couldn't see right now.)"
+        )
+    return prompt
+
 # Spoken-output tuning. Appended to Claude Code's own system prompt.
 VOICE_SYSTEM_PROMPT = (
     "You are Reachy, a small desktop robot with a physical body, antennas, and a "
@@ -109,10 +125,11 @@ class ClaudeClient:
             cmd += ["--resume", self.session_id]
         return cmd
 
-    def ask(self, prompt: str) -> str:
+    def ask(self, prompt: str, image_path: str | None = None, camera_failed: bool = False) -> str:
         """Send one user turn, return Claude's spoken reply text."""
-        cmd = self._build_cmd(prompt)
-        log.info("claude ask (session=%s): %r", self.session_id, prompt)
+        full_prompt = _augment_prompt(prompt, image_path, camera_failed)
+        cmd = self._build_cmd(full_prompt)
+        log.info("claude ask (session=%s, image=%s): %r", self.session_id, bool(image_path), prompt)
         try:
             proc = subprocess.run(
                 cmd,
