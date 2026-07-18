@@ -1,0 +1,19 @@
+# reachy_app/requirements.txt — kept light for the Pi.
+
+requests>=2.31          # POST audio to the Mac connector
+numpy>=1.24             # audio buffers
+
+# Local-audio backend (Mac mic/speaker for testing). On macOS this needs PortAudio:
+#   brew install portaudio
+# On the robot you use the reachy backend instead, so this is only for --backend local.
+sounddevice>=0.4.6
+
+python-dotenv>=1.0      # optional .env loading
+
+# --- Optional, install only when you use them ---
+# Wake word ("Hey Reachy"). Needs a free Picovoice access key + a .ppn keyword file.
+#   pip install pvporcupine
+# pvporcupine>=3.0
+
+# The robot backend uses the Reachy Mini SDK, installed on the robot itself
+# (reachy_mini). Not listed here so `pip install -r` on the Mac stays light.

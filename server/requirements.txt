@@ -1,0 +1,11 @@
+# server/requirements.txt
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9   # required by FastAPI for file uploads (/chat)
+python-dotenv>=1.0        # optional .env loading
+faster-whisper>=1.0       # local speech-to-text
+requests>=2.31            # used by smoke_test.py
+
+# Text-to-speech is Piper, installed as a separate step (binary + a voice model).
+# See README "Install". The pip package below provides the `piper` CLI:
+piper-tts>=1.2

@@ -1,0 +1,31 @@
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# --- Secrets / local config (keep the *.env.example templates) ---
+.env
+
+# --- Large downloadable assets (Piper voices; see server/README.md to fetch) ---
+voices/
+*.onnx
+*.onnx.json
+
+# --- Claude Code runtime workspace (sandbox + --resume session state) ---
+claude-workspace/
+
+# --- Remember plugin logs ---
+.remember/
+
+# --- Audio test artifacts ---
+*.wav
+
+# --- OS / editor ---
+.DS_Store
+*.swp
+.idea/
+.vscode/
