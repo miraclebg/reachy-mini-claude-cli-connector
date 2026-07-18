@@ -186,7 +186,11 @@ class ReachyMiniBackend(AudioBackend):
                 if s is None:
                     time.sleep(0.005)
                     continue
-                s = np.asarray(s, dtype=np.float32).reshape(-1)
+                # Reachy's mic is an ARRAY: get_audio_sample() returns (frames, channels),
+                # e.g. (1024, 2). Downmix to mono — flattening would interleave the
+                # channels into garbage (2x too long, comb-filtered) and wreck STT.
+                s = np.asarray(s, dtype=np.float32)
+                s = s.mean(axis=1) if s.ndim == 2 else s.reshape(-1)
                 samples.append(s)
                 if should_stop(s):
                     break
