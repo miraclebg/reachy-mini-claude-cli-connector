@@ -1,4 +1,11 @@
-from claude_client import _augment_prompt
+from claude_client import _augment_prompt, VOICE_SYSTEM_PROMPT
+
+
+def test_prompt_documents_movement():
+    p = VOICE_SYSTEM_PROMPT
+    assert "[MOVE" in p              # marker taught
+    assert "look_left" in p          # a named routine listed
+    assert "[/MOVE]" in p            # keyframe block form taught
 
 
 def test_no_image_unchanged():
