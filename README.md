@@ -62,6 +62,10 @@ See [`DESIGN.md`](DESIGN.md) for the full rationale and locked decisions.
 - 🤖 **Embodied feedback** — antenna/head gestures per state; head "wobble" while speaking.
 - 🌍 **Any language** — currently wired for Bulgarian; swap with a few settings.
 - 🎛️ **Tunable** — model, reasoning effort, and permission posture via `.env` or `make`.
+- **Voice-directed movement** — tell Reachy to look, rotate, tilt, nod, or flap its
+  antennas, or ask for something open-ended ("потанцувай") and Claude improvises the
+  motion. Movements compose with vision: "погледни наляво и ми кажи какво виждаш" turns,
+  photographs the new view, and describes it.
 
 ---
 
@@ -206,6 +210,54 @@ Served at `http://<host>:8081/`. It's a small chat UI:
 
 ---
 
+## Voice-directed movement
+
+Reachy can move its body on command. Two kinds of request, one mechanism: **named
+routines** for the common moves, and **Claude-improvised** motion for anything else.
+All movement is safety-clamped on the robot.
+
+### Commands
+
+| Say (BG) | What it does |
+|---|---|
+| погледни наляво / надясно | turn the head to look left / right (and hold) |
+| погледни нагоре / надолу | tip the head up / down (and hold) |
+| завърти се наляво / надясно | rotate the whole body left / right (and hold) |
+| наклони глава наляво / надясно | lean the head ear-to-shoulder (and hold) |
+| кимни | nod "yes" and return |
+| поклати глава | shake "no" and return |
+| размахай антени (лявата / дясната / двете) | flap antennas and return |
+| потанцувай / изненадай ме / … | Claude improvises a short motion |
+
+### How Reachy decides to move, speak, or both
+
+- A bare movement command is **silent** — Reachy just moves, no chit-chat.
+- It **speaks** only when you also asked for information back. "Погледни наляво **и ми
+  кажи какво виждаш**" turns left, takes a photo *from that pose*, and describes it.
+- For requests with no named routine, Claude composes its own keyframes on the fly, so
+  "dance" is genuine improvisation rather than one canned routine.
+- Orientation moves (look/rotate/tilt) **hold** their pose; gesture moves (nod/shake/
+  flap/dance) **return** to neutral. Reachy re-centers on the next command or turn.
+
+### Safety
+
+Every movement runs through one clamped player on the robot: each axis is capped to a
+tested range, a velocity floor prevents jerky high-speed swings, and a sequence can't
+exceed ~8 seconds. Claude can *ask* for anything; the robot caps it.
+
+### Settings (`server/.env`)
+
+| Var | Default | Meaning |
+|---|---|---|
+| `MOVEMENT_ENABLED` | `true` | Master switch for voice-directed movement. |
+| `MOVE_TIMEOUT_S` | `12` | How long the connector waits for a movement to finish. |
+
+Movement reuses the robot app's address (same host/port as the camera), so no extra URL
+is needed. With no robot connected, movement markers are parsed and stripped and the
+reply still behaves correctly — nothing moves.
+
+---
+
 ## HTTP API
 
 ### Connector (`server/`, port 8080)
@@ -225,6 +277,11 @@ Served at `http://<host>:8081/`. It's a small chat UI:
 | `GET`  | `/status` | `{"state":"idle"}` — current loop phase. |
 | `GET`  | `/history` | `{"seq":N,"turns":[{"you","reply"}]}` — conversation log. |
 | `POST` | `/press` / `/release` | Button hold / end-of-speech. |
+
+- `POST /move` — run a movement. Body `{"spec": "look_left"}` (named routine) or
+  `{"spec": [{"yaw": 20, "dur": 0.3}, …]}` (keyframes). Safety-clamped on the robot.
+- `GET /frame?hold=1` — capture from the current (already-moved) pose instead of rising
+  to the default photo pose.
 
 All app endpoints except `/health` require the token (via `?token=` or an
 `X-Auth-Token` header) when `BUTTON_TOKEN` is configured.
