@@ -120,7 +120,12 @@ main README "Language" section; nothing changes on the robot.
 - The app is `reachy_app/app.py` → `class ReachyClaudeConnectorApp(ReachyMiniApp)`.
 - `pyproject.toml` exposes it via `[project.entry-points."reachy_mini_apps"]`, which is
   how the dashboard discovers installed apps. The manager launches it as
-  `/venvs/apps_venv/bin/python -m reachy_app.app`.
+  `/venvs/apps_venv/bin/python -m reachy_claude_connector.main` (a thin entry shim; the
+  real app is `reachy_app/app.py`). The shim exists because the daemon locates an app by
+  matching the entry-point *name* to a site-packages folder and scrapes `custom_app_url`
+  from that folder's `main.py` — so the folder name must equal the entry-point name
+  `reachy_claude_connector`, which `reachy_app/` did not. Without the shim the desktop app
+  never learns we have a UI and won't embed it.
 - The framework hands the app a connected `ReachyMini` and a `stop_event`, and serves
   `reachy_app/static/index.html` at `custom_app_url` (`:8042`); the app adds the
   `/press /release /status /history` routes to `self.settings_app`.

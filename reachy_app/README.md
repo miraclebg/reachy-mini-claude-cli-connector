@@ -95,6 +95,8 @@ utterance → STT → Claude → TTS → playback, asserting the gesture order).
 - `wakeword.py` — Porcupine wrapper (no-op until configured).
 - `vad.py` — RMS trailing-silence end-of-speech detector.
 - `config.py` — env-driven settings (`.env.example`).
+- `../reachy_claude_connector/main.py` — dashboard entry shim (carries the scrapeable
+  `custom_app_url`; re-exports `app.py`'s `ReachyClaudeConnectorApp`).
 
 ## On-robot follow-ups (not yet hardware-tested)
 

@@ -18,16 +18,18 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
-# How the Reachy dashboard discovers this app. `python -m reachy_app.app` (the module
-# side of this entry point) is what the app manager launches.
+# How the Reachy dashboard discovers this app. `python -m reachy_claude_connector.main`
+# (the module side of this entry point) is what the app manager launches.
 [project.entry-points."reachy_mini_apps"]
-reachy_claude_connector = "reachy_app.app:ReachyClaudeConnectorApp"
+# The KEY (app name shown in the dashboard) stays `reachy_claude_connector`; the daemon
+# also scrapes custom_app_url from site_packages/reachy_claude_connector/main.py — the shim.
+reachy_claude_connector = "reachy_claude_connector.main:ReachyClaudeConnectorApp"
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["reachy_app*"]
+include = ["reachy_app*", "reachy_claude_connector*"]
 exclude = ["reachy_app.tests*"]
 
 [tool.setuptools.package-data]

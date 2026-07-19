@@ -180,6 +180,24 @@ def test_button_auth() -> None:
         srv.stop()
 
 
+def test_entry_shim_scrapeable() -> None:
+    print("embed: daemon can scrape custom_app_url from the entry shim")
+    import os
+    import re
+    # The daemon reads site_packages/<entry-point-name>/main.py and regex-scrapes it
+    # WITHOUT importing. Our entry-point name is `reachy_claude_connector`; mirror the
+    # same file from the source tree (…/reachy_app/tests/test_smoke.py -> repo root).
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    shim = os.path.join(root, "reachy_claude_connector", "main.py")
+    check("entry shim main.py exists", os.path.exists(shim), shim)
+    text = open(shim, encoding="utf-8").read() if os.path.exists(shim) else ""
+    # This pattern is copied verbatim from the daemon's _get_custom_app_url_from_file().
+    m = re.search(r"""custom_app_url\s*(?::\s*[^=]+)?\s*=\s*["']([^"']+)["']""", text)
+    check("custom_app_url is scrapeable", bool(m), "no regex match")
+    check("scrapes to :8042", (m.group(1) if m else "") == "http://0.0.0.0:8042",
+          m.group(1) if m else "<none>")
+
+
 class FakeDriver:
     """Records driver calls instead of moving a robot."""
     def __init__(self) -> None:
@@ -324,6 +342,7 @@ def test_full_turn() -> None:
 def main() -> int:
     for t in (
         test_wav_roundtrip, test_endpointer, test_button_server, test_button_auth,
+        test_entry_shim_scrapeable,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
         test_movement_caps_sequence, test_movement_base_keyframe,
