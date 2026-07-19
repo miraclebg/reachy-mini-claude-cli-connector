@@ -447,6 +447,41 @@ def test_supervisor_restarts_on_build_failure() -> None:
     check("thread stopped after recovery", not sup._thread_alive())
 
 
+def test_apply_config_request_flow() -> None:
+    print("config route: apply_config_request validates, sets level, rebuilds, flags restart")
+    import logging as _logging
+    from reachy_app.supervisor import apply_config_request
+    cfg = RuntimeConfig(path=_tmp_runtime_path())
+
+    class _FakeSup:
+        def __init__(self): self.rebuilds = 0
+        def rebuild(self): self.rebuilds += 1
+
+    sup = _FakeSup()
+    root_before = _logging.getLogger().level
+    try:
+        # invalid value -> 400, nothing changed, no rebuild
+        code, body = apply_config_request(cfg, sup, {"log_level": "LOUD"})
+        check("invalid -> 400", code == 400 and body["ok"] is False, str(body))
+        check("invalid -> no rebuild", sup.rebuilds == 0)
+        # log_level -> 200, sets the root logger level, no rebuild
+        code, body = apply_config_request(cfg, sup, {"log_level": "warning"})
+        check("log_level -> 200", code == 200 and body["changed"] == ["log_level"], str(body))
+        check("root logger level set", _logging.getLogger().level == _logging.WARNING)
+        check("log_level -> no rebuild", sup.rebuilds == 0)
+        # worker-affecting param -> rebuild once, response echoes the new value
+        code, body = apply_config_request(cfg, sup, {"max_utterance_s": 25})
+        check("worker param -> rebuild", sup.rebuilds == 1, str(sup.rebuilds))
+        check("response echoes config", body["config"]["max_utterance_s"] == 25.0, str(body["config"]))
+        check("worker param -> not restart_required", body["restart_required"] is False, str(body))
+        # media backend -> restart_required, NOT a live rebuild
+        code, body = apply_config_request(cfg, sup, {"reachy_media_backend": "local"})
+        check("media backend -> restart_required", body["restart_required"] is True, str(body))
+        check("media backend -> no extra rebuild", sup.rebuilds == 1, str(sup.rebuilds))
+    finally:
+        _logging.getLogger().setLevel(root_before)  # don't leak the level into later tests
+
+
 class FakeDriver:
     """Records driver calls instead of moving a robot."""
     def __init__(self) -> None:
@@ -598,6 +633,7 @@ def main() -> int:
         test_supervisor_rebuild_swaps_params, test_supervisor_stop_is_clean,
         test_supervisor_crash_restarts_and_reports_error,
         test_supervisor_restarts_on_build_failure,
+        test_apply_config_request_flow,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
         test_movement_caps_sequence, test_movement_base_keyframe,

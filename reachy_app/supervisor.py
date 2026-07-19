@@ -23,7 +23,7 @@ from .audio import AudioBackend
 from .button_server import ButtonState, History, StatusState
 from .connector_client import ConnectorClient
 from .loop import ConversationLoop
-from .runtime_config import RuntimeConfig
+from .runtime_config import RuntimeConfig, config_actions
 
 log = logging.getLogger("reachy.supervisor")
 
@@ -124,3 +124,27 @@ class Supervisor:
     def _thread_alive(self) -> bool:
         t = self._thread
         return t is not None and t.is_alive()
+
+
+def apply_config_request(config: RuntimeConfig, supervisor: "Supervisor", payload: dict) -> tuple[int, dict]:
+    """Shared body of `POST /config`: validate + persist, then act on what changed.
+
+    Framework-free (no FastAPI, no robot) so it is unit-testable on the Mac.
+    Returns (status_code, response_dict); `app.run()` wraps it in a JSONResponse.
+    `supervisor` only needs a `.rebuild()` method (duck-typed for tests).
+    """
+    try:
+        changed = config.apply_updates(payload)
+    except ValueError as e:
+        return 400, {"ok": False, "error": str(e)}
+    actions = config_actions(changed)
+    if actions["set_log_level"]:
+        logging.getLogger().setLevel(config.log_level)
+    if actions["rebuild"]:
+        supervisor.rebuild()
+    return 200, {
+        "ok": True,
+        "changed": sorted(changed),
+        "config": config.public_dict(),
+        "restart_required": actions["restart_required"],
+    }
