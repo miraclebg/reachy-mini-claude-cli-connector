@@ -59,12 +59,18 @@ class RuntimeConfig:
     # -- validation / coercion (raises ValueError on bad input) --
     def _coerce(self, key: str, value) -> object:
         if key == "request_timeout_s":
-            v = float(value)
+            try:
+                v = float(value)
+            except (TypeError, ValueError):
+                raise ValueError(f"{key} must be a number")
             if not (1.0 <= v <= 600.0):
                 raise ValueError("request_timeout_s must be between 1 and 600")
             return v
         if key == "max_utterance_s":
-            v = float(value)
+            try:
+                v = float(value)
+            except (TypeError, ValueError):
+                raise ValueError(f"{key} must be a number")
             if not (1.0 <= v <= 120.0):
                 raise ValueError("max_utterance_s must be between 1 and 120")
             return v
@@ -84,7 +90,13 @@ class RuntimeConfig:
         try:
             with open(self._path, encoding="utf-8") as fh:
                 data = json.load(fh)
-        except (OSError, ValueError):
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError) as e:
+            log.warning("could not read runtime config %s: %s", self._path, e)
+            return
+        if not isinstance(data, dict):
+            log.warning("ignoring runtime config at %s: not a JSON object", self._path)
             return
         for k in LIVE_FIELDS:
             if k in data:

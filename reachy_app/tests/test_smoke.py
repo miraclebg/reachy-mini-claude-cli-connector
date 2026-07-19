@@ -270,6 +270,34 @@ def test_runtime_config_validation_atomic() -> None:
     check("no-op update -> empty changed set", same == set(), str(same))
 
 
+def test_runtime_config_robust_load_and_types() -> None:
+    print("runtime config: non-dict overlay and non-numeric input degrade safely")
+    import json as _json
+    path = _tmp_runtime_path()
+    # a non-dict runtime.json must NOT crash construction — it is ignored
+    with open(path, "w", encoding="utf-8") as fh:
+        _json.dump(42, fh)
+    cfg = RuntimeConfig(path=path)  # must not raise
+    check("non-dict overlay ignored, construction succeeds", isinstance(cfg.public_dict(), dict))
+    # non-numeric input to a numeric field raises ValueError (not TypeError)
+    raised_value = False
+    try:
+        cfg.apply_updates({"request_timeout_s": None})
+    except ValueError:
+        raised_value = True
+    except TypeError:
+        raised_value = False
+    check("non-numeric request_timeout_s -> ValueError", raised_value)
+    raised_value2 = False
+    try:
+        cfg.apply_updates({"max_utterance_s": [1]})
+    except ValueError:
+        raised_value2 = True
+    except TypeError:
+        raised_value2 = False
+    check("non-numeric max_utterance_s -> ValueError", raised_value2)
+
+
 def test_config_actions_mapping() -> None:
     print("runtime config: change set maps to the right actions")
     a = config_actions({"log_level"})
@@ -447,6 +475,7 @@ def main() -> int:
         test_wav_roundtrip, test_endpointer, test_button_server, test_shell_tabs,
         test_button_auth, test_entry_shim_scrapeable,
         test_runtime_config_persist_roundtrip, test_runtime_config_validation_atomic,
+        test_runtime_config_robust_load_and_types,
         test_config_actions_mapping, test_restart_app_posts_daemon,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
