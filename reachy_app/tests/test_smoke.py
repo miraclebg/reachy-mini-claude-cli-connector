@@ -147,6 +147,23 @@ def test_shell_tabs() -> None:
         srv.stop()
 
 
+def test_settings_panel() -> None:
+    print("settings: page has the live-config form wired to /config")
+    srv = ButtonServer("127.0.0.1", 8096)
+    srv.start()
+    time.sleep(0.2)
+    try:
+        page = urllib.request.urlopen("http://127.0.0.1:8096/", timeout=2).read().decode()
+        check("form talks to /config", "/config" in page, "")
+        check("has reply-timeout field", 'data-cfg="request_timeout_s"' in page, "")
+        check("has max-utterance field", 'data-cfg="max_utterance_s"' in page, "")
+        check("has log-level field", 'data-cfg="log_level"' in page, "")
+        check("has media-backend field", 'data-cfg="reachy_media_backend"' in page, "")
+        check("has restart-app action", "/restart-app" in page, "")
+    finally:
+        srv.stop()
+
+
 # --------------------------- full turn (needs server) ---------------------------
 
 class FakeBackend(AudioBackend):
@@ -626,6 +643,7 @@ def test_full_turn() -> None:
 def main() -> int:
     for t in (
         test_wav_roundtrip, test_endpointer, test_button_server, test_shell_tabs,
+        test_settings_panel,
         test_button_auth, test_entry_shim_scrapeable,
         test_runtime_config_persist_roundtrip, test_runtime_config_validation_atomic,
         test_runtime_config_robust_load_and_types,

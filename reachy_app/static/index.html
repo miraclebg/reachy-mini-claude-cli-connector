@@ -70,6 +70,25 @@
 
   .placeholder { margin: auto; padding: 2rem; text-align: center; opacity: .5; font-size: .95rem; line-height: 1.5; }
 
+  #cfg { padding: 1rem 1rem 2rem; overflow-y: auto; }
+  .cfg-note { margin: 0 0 1rem; font-size: .85rem; opacity: .7; }
+  .cfg-note.err { color: var(--red); opacity: 1; }
+  .cfg-group { background: var(--card); border: 1px solid var(--line); border-radius: .8rem;
+               padding: .3rem .9rem; margin-bottom: 1rem; }
+  .cfg-label { font-size: .75rem; letter-spacing: .04em; text-transform: uppercase;
+               opacity: .5; padding: .7rem 0 .2rem; }
+  .cfg-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+             padding: .7rem 0; border-bottom: 1px solid var(--line); font-size: .95rem; }
+  .cfg-group .cfg-row:last-of-type { border-bottom: none; }
+  .cfg-row em { opacity: .5; font-style: normal; font-size: .8rem; }
+  .cfg-row input, .cfg-row select { background: var(--bg); color: var(--fg);
+             border: 1px solid var(--line); border-radius: .5rem; padding: .4rem .5rem;
+             font: inherit; min-width: 6.5rem; }
+  .cfg-row input:disabled, .cfg-row select:disabled { opacity: .45; }
+  .cfg-btn { width: 100%; padding: .7rem; margin: .3rem 0 .6rem; border: none; border-radius: .6rem;
+             background: var(--amber); color: #1c1e22; font: inherit; font-weight: 600; cursor: pointer; }
+  .cfg-btn:disabled { opacity: .45; cursor: default; }
+
   footer { flex: 0 0 auto; padding: .9rem 1rem calc(.9rem + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
   footer.hidden { display: none; }
   #talk {
@@ -104,7 +123,38 @@
       <div id="log"><div id="empty">Hold the button and say something to Reachy…</div></div>
     </section>
     <section id="tab-settings" class="tab hidden" data-tab="settings">
-      <div class="placeholder">⚙️ Settings<br>Server connection & tuning arrive in the next update.</div>
+      <div id="cfg">
+        <p id="cfg-note" class="cfg-note">Loading settings…</p>
+
+        <div class="cfg-group">
+          <label class="cfg-row">
+            <span>Reply timeout <em>(seconds)</em></span>
+            <input type="number" min="1" max="600" step="1" data-cfg="request_timeout_s" disabled />
+          </label>
+          <label class="cfg-row">
+            <span>Max utterance <em>(seconds)</em></span>
+            <input type="number" min="1" max="120" step="1" data-cfg="max_utterance_s" disabled />
+          </label>
+          <label class="cfg-row">
+            <span>Log level</span>
+            <select data-cfg="log_level" disabled>
+              <option>DEBUG</option><option>INFO</option><option>WARNING</option>
+              <option>ERROR</option><option>CRITICAL</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="cfg-group">
+          <div class="cfg-label">Advanced</div>
+          <label class="cfg-row">
+            <span>Audio pipeline <em>(restarts the app)</em></span>
+            <select data-cfg="reachy_media_backend" disabled>
+              <option>default</option><option>local</option><option>webrtc</option>
+            </select>
+          </label>
+          <button id="cfg-restart" class="cfg-btn" disabled>Save &amp; restart app</button>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -196,6 +246,60 @@
   setInterval(pollStatus, 350);
   setInterval(pollHistory, 1000);
   pollStatus(); pollHistory();
+
+  // ---- Settings config panel (settings_app origin only; degrades on the phone page) ----
+  const cfgNote = document.getElementById("cfg-note");
+  const cfgInputs = Array.from(document.querySelectorAll("[data-cfg]"));
+  const cfgRestart = document.getElementById("cfg-restart");
+  let cfgLoaded = false;
+
+  function cfgSet(enabled, note, isErr) {
+    cfgInputs.forEach(el => { el.disabled = !enabled; });
+    if (cfgRestart) cfgRestart.disabled = !enabled;
+    if (note !== undefined) { cfgNote.textContent = note; cfgNote.classList.toggle("err", !!isErr); }
+  }
+
+  async function cfgLoad() {
+    if (cfgLoaded) return;
+    try {
+      const data = await (await fetch("/config", { headers: AUTH, cache: "no-store" })).json();
+      cfgInputs.forEach(el => { if (el.dataset.cfg in data) el.value = data[el.dataset.cfg]; });
+      cfgSet(true, "Changes apply live. Audio pipeline needs a restart.", false);
+      cfgLoaded = true;
+    } catch (e) {
+      cfgSet(false, "Settings are available inside the Reachy desktop app.", true);
+    }
+  }
+
+  async function cfgPost(field, value) {
+    cfgNote.classList.remove("err");
+    try {
+      const res = await fetch("/config", {
+        method: "POST", headers: { "Content-Type": "application/json", ...AUTH },
+        body: JSON.stringify({ [field]: value }),
+      });
+      const out = await res.json();
+      if (!res.ok || !out.ok) { cfgNote.textContent = out.error || "Rejected"; cfgNote.classList.add("err"); return null; }
+      cfgNote.textContent = "Saved.";
+      return out;
+    } catch (e) { cfgNote.textContent = "Save failed"; cfgNote.classList.add("err"); return null; }
+  }
+
+  cfgInputs.forEach(el => el.addEventListener("change", () => {
+    if (el.dataset.cfg === "reachy_media_backend") return;  // restart-gated; handled below
+    cfgPost(el.dataset.cfg, el.type === "number" ? Number(el.value) : el.value);
+  }));
+
+  if (cfgRestart) cfgRestart.addEventListener("click", async () => {
+    const mb = cfgInputs.find(el => el.dataset.cfg === "reachy_media_backend");
+    const out = await cfgPost("reachy_media_backend", mb ? mb.value : "default");
+    if (!out) return;
+    cfgNote.textContent = "Restarting the app…";
+    try { await fetch("/restart-app", { method: "POST", headers: AUTH }); } catch (e) { /* app is going down */ }
+  });
+
+  // load config the first time Settings is opened
+  document.querySelector('.seg-btn[data-tab="settings"]').addEventListener("click", cfgLoad);
 </script>
 </body>
 </html>
