@@ -95,8 +95,16 @@ utterance → STT → Claude → TTS → playback, asserting the gesture order).
 - `wakeword.py` — Porcupine wrapper (no-op until configured).
 - `vad.py` — RMS trailing-silence end-of-speech detector.
 - `config.py` — env-driven settings (`.env.example`).
+- `runtime_config.py` — mutable, persisted live config (the Settings-tab knobs); seeds from `config.py`.
+- `supervisor.py` — persistent supervisor + rebuildable worker thread; applies live config without restarting the app.
 - `../reachy_claude_connector/main.py` — dashboard entry shim (carries the scrapeable
   `custom_app_url`; re-exports `app.py`'s `ReachyClaudeConnectorApp`).
+
+**Live config (packaged app):** the dashboard-launched process is a *supervisor* that
+owns the ReachyMini handle and serves the UI; the conversation loop runs in a *worker*
+thread it rebuilds when you change a setting on the Settings tab (`POST /config`). Reply
+timeout, max utterance, and log level apply live; the audio pipeline (media backend) needs
+`POST /restart-app` (a daemon bounce). The standalone `main.py` path is unchanged.
 
 ## On-robot follow-ups (not yet hardware-tested)
 

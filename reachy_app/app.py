@@ -30,12 +30,14 @@ for _s in (sys.stdout, sys.stderr):
 from reachy_mini import ReachyMini, ReachyMiniApp
 from reachy_mini.utils import create_head_pose
 
+import logging
+
 from .audio import ReachyMiniBackend
 from .button_server import ButtonState, History, StatusState
-from .config import settings
 from .connector_client import ConnectorClient
-from .loop import ConversationLoop
 from .movement import MovementPlayer
+from .runtime_config import RuntimeConfig, restart_current_app
+from .supervisor import Supervisor, apply_config_request
 
 
 class ReachyClaudeConnectorApp(ReachyMiniApp):
@@ -45,18 +47,28 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
     custom_app_url: str | None = "http://0.0.0.0:8042"
     request_media_backend: str | None = None  # -> "default" (robot mic + speaker)
 
-    def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
-        from fastapi.responses import Response
+    def __init__(self) -> None:
+        super().__init__()
+        # The framework fixes the media backend when it builds ReachyMini, BEFORE run(),
+        # from this attribute — so a persisted change only takes effect on the next app
+        # start (that is why the UI calls POST /restart-app for it). Leave None ("framework
+        # default") unless the user picked a non-default. VERIFY-ON-HARDWARE.
+        mb = RuntimeConfig().reachy_media_backend
+        if mb and mb != "default":
+            self.request_media_backend = mb
 
-        client = ConnectorClient(
-            settings.connector_url,
-            timeout_s=settings.request_timeout_s,
-            token=settings.connector_token,
-        )
+    def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
+        from fastapi.responses import JSONResponse, Response
+
+        config = RuntimeConfig()
+        logging.getLogger().setLevel(config.log_level)
+
+        # Best-effort readiness log; the worker owns the real per-turn client.
         try:
-            self.logger.info("connector: %s", client.health())
+            probe = ConnectorClient(config.connector_url, token=config.connector_token)
+            self.logger.info("connector: %s", probe.health())
         except Exception as e:  # keep going; per-turn errors surface in the UI
-            self.logger.warning("connector not reachable at %s (%s)", settings.connector_url, e)
+            self.logger.warning("connector not reachable at %s (%s)", config.connector_url, e)
 
         button, status, history = ButtonState(), StatusState(), History()
 
@@ -146,20 +158,31 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
             return Response(content=bytes(jpeg), media_type="image/jpeg")
 
         backend = ReachyMiniBackend(mini=reachy_mini)
-        loop = ConversationLoop(
-            backend=backend,
-            client=client,
-            button=button,
-            wake=None,  # wake word is standalone-only for now; button triggers here
-            on_state=status.set,
-            on_turn=history.add,
-            vad_rms_threshold=settings.vad_rms_threshold,
-            vad_silence_ms=settings.vad_silence_ms,
-            vad_min_speech_ms=settings.vad_min_speech_ms,
-            max_utterance_s=settings.max_utterance_s,
+        supervisor = Supervisor(
+            backend=backend, config=config,
+            button=button, status=status, history=history,
         )
+
+        @app.get("/config")
+        def _get_config() -> dict:
+            return config.public_dict()
+
+        @app.post("/config")
+        def _post_config(payload: dict) -> Response:
+            code, body = apply_config_request(config, supervisor, payload)
+            return JSONResponse(body, status_code=code)
+
+        @app.post("/restart-app")
+        def _restart_app() -> dict:
+            return {"ok": restart_current_app(logger=self.logger)}
+
         self.logger.info("Reachy Claude connector app running — open %s to talk.", self.custom_app_url)
-        loop.run_forever(stop_event=stop_event)
+        supervisor.start()
+        try:
+            while not stop_event.is_set():
+                stop_event.wait(0.2)
+        finally:
+            supervisor.stop()
 
 
 if __name__ == "__main__":
