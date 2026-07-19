@@ -419,6 +419,34 @@ def test_supervisor_crash_restarts_and_reports_error() -> None:
     check("thread stopped after restart", not sup._thread_alive())
 
 
+def test_supervisor_restarts_on_build_failure() -> None:
+    print("supervisor: a loop-build failure sets error and restarts, not a silent thread death")
+    cfg = RuntimeConfig(path=_tmp_runtime_path())
+    status = StatusState()
+
+    class _FailOnceFactory:
+        def __init__(self): self.calls = 0
+        def __call__(self, url, timeout_s=180.0, token=""):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("bad config")  # build failure on the first spawn
+            return object()
+
+    factory = _FailOnceFactory()
+    fake = FakeBackend(pcm_to_wav(np.zeros(1600, dtype=np.float32), 16000))
+    sup = Supervisor(backend=fake, config=cfg, button=ButtonState(),
+                     status=status, history=History(), client_factory=factory,
+                     crash_backoff=(0.02,))
+    sup.start()
+    try:
+        check("error state on build failure", _wait_until(lambda: status.get() == "error"))
+        check("rebuilds after a build failure", _wait_until(lambda: factory.calls >= 2))
+        check("worker recovers a live loop", _wait_until(lambda: sup.current_loop is not None))
+    finally:
+        sup.stop()
+    check("thread stopped after recovery", not sup._thread_alive())
+
+
 class FakeDriver:
     """Records driver calls instead of moving a robot."""
     def __init__(self) -> None:
@@ -569,6 +597,7 @@ def main() -> int:
         test_config_actions_mapping, test_restart_app_posts_daemon,
         test_supervisor_rebuild_swaps_params, test_supervisor_stop_is_clean,
         test_supervisor_crash_restarts_and_reports_error,
+        test_supervisor_restarts_on_build_failure,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
         test_movement_caps_sequence, test_movement_base_keyframe,

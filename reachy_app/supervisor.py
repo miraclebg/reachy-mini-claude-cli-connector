@@ -72,9 +72,9 @@ class Supervisor:
     def _worker_main(self, stop: threading.Event) -> None:
         crashes = 0
         while not stop.is_set():
-            loop = self._build_loop()
-            self.current_loop = loop
             try:
+                loop = self._build_loop()
+                self.current_loop = loop
                 loop.run_forever(stop_event=stop)
                 break  # clean return == stop was set
             except Exception:
