@@ -23,7 +23,7 @@ import urllib.request
 import numpy as np
 
 from reachy_app.audio import AudioBackend, pcm_to_wav, wav_to_pcm, wav_duration_s
-from reachy_app.button_server import ButtonServer, StatusState
+from reachy_app.button_server import ButtonServer, ButtonState, History, StatusState
 from reachy_app.config import settings
 from reachy_app.connector_client import ConnectorClient
 from reachy_app.loop import ConversationLoop
@@ -31,6 +31,7 @@ from reachy_app.movement import (
     MovementPlayer, resolve, PRESETS, HEAD_LIMITS, BASE_LIMIT, MAX_KEYFRAMES, MAX_TOTAL_S, MIN_DUR,
 )
 from reachy_app.runtime_config import RuntimeConfig, config_actions, restart_current_app, LIVE_FIELDS
+from reachy_app.supervisor import Supervisor
 from reachy_app.vad import SilenceEndpointer
 
 SERVER = "http://localhost:8080"
@@ -329,6 +330,95 @@ def test_restart_app_posts_daemon() -> None:
     check("returns False when the daemon is unreachable", ok2 is False)
 
 
+# --------------------------- supervisor ---------------------------
+
+class _RecordingClientFactory:
+    """Captures ConnectorClient construction args; returns a harmless stub."""
+    def __init__(self) -> None:
+        self.calls: list = []
+    def __call__(self, url, timeout_s=180.0, token=""):
+        self.calls.append((url, timeout_s, token))
+        return object()  # never used: no trigger fires in these tests
+
+
+def _wait_until(pred, timeout=3.0) -> bool:
+    end = time.time() + timeout
+    while time.time() < end:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_supervisor_rebuild_swaps_params() -> None:
+    print("supervisor: rebuild swaps loop params and rebuilds the client")
+    path = _tmp_runtime_path()
+    cfg = RuntimeConfig(path=path)
+    factory = _RecordingClientFactory()
+    fake = FakeBackend(pcm_to_wav(np.zeros(1600, dtype=np.float32), 16000))
+    sup = Supervisor(backend=fake, config=cfg, button=ButtonState(),
+                     status=StatusState(), history=History(), client_factory=factory)
+    sup.start()
+    try:
+        check("worker builds a loop", _wait_until(lambda: sup.current_loop is not None))
+        first = sup.current_loop
+        check("loop uses seeded max_utterance",
+              first.max_utterance_s == cfg.max_utterance_s, str(first.max_utterance_s))
+        cfg.apply_updates({"max_utterance_s": 42, "request_timeout_s": 33})
+        sup.rebuild()
+        check("rebuild produced a NEW loop", _wait_until(lambda: sup.current_loop is not None and sup.current_loop is not first))
+        check("new loop uses updated max_utterance", sup.current_loop.max_utterance_s == 42.0,
+              str(sup.current_loop.max_utterance_s))
+        check("client rebuilt with new timeout", factory.calls[-1][1] == 33.0, str(factory.calls[-1]))
+    finally:
+        sup.stop()
+    check("worker thread stopped", _wait_until(lambda: sup.current_loop is not None) and not sup._thread_alive())
+
+
+def test_supervisor_stop_is_clean() -> None:
+    print("supervisor: stop joins the worker and blocks further rebuilds")
+    cfg = RuntimeConfig(path=_tmp_runtime_path())
+    fake = FakeBackend(pcm_to_wav(np.zeros(1600, dtype=np.float32), 16000))
+    sup = Supervisor(backend=fake, config=cfg, button=ButtonState(),
+                     status=StatusState(), history=History(),
+                     client_factory=_RecordingClientFactory())
+    sup.start()
+    check("started", _wait_until(lambda: sup.current_loop is not None))
+    sup.stop()
+    check("thread not alive after stop", not sup._thread_alive())
+    sup.rebuild()  # must be a no-op after shutdown, not raise
+    check("rebuild after stop stays stopped", not sup._thread_alive())
+
+
+def test_supervisor_crash_restarts_and_reports_error() -> None:
+    print("supervisor: a worker crash sets error state and restarts (bounded)")
+    cfg = RuntimeConfig(path=_tmp_runtime_path())
+
+    class _CrashOnceBackend(FakeBackend):
+        def __init__(self, wav):
+            super().__init__(wav)
+            self.enters = 0
+        def enter_idle(self):
+            self.enters += 1
+            if self.enters == 1:
+                raise RuntimeError("boom")  # crash the first worker run
+            super().enter_idle()
+
+    fake = _CrashOnceBackend(pcm_to_wav(np.zeros(1600, dtype=np.float32), 16000))
+    status = StatusState()
+    sup = Supervisor(backend=fake, config=cfg, button=ButtonState(),
+                     status=status, history=History(),
+                     client_factory=_RecordingClientFactory(),
+                     crash_backoff=(0.02,))
+    sup.start()
+    try:
+        check("error state published on crash", _wait_until(lambda: status.get() == "error"))
+        check("worker restarts after backoff", _wait_until(lambda: fake.enters >= 2))
+    finally:
+        sup.stop()
+    check("thread stopped after restart", not sup._thread_alive())
+
+
 class FakeDriver:
     """Records driver calls instead of moving a robot."""
     def __init__(self) -> None:
@@ -477,6 +567,8 @@ def main() -> int:
         test_runtime_config_persist_roundtrip, test_runtime_config_validation_atomic,
         test_runtime_config_robust_load_and_types,
         test_config_actions_mapping, test_restart_app_posts_daemon,
+        test_supervisor_rebuild_swaps_params, test_supervisor_stop_is_clean,
+        test_supervisor_crash_restarts_and_reports_error,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
         test_movement_caps_sequence, test_movement_base_keyframe,
