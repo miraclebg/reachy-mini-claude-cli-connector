@@ -130,6 +130,21 @@ def test_button_server() -> None:
         srv.stop()
 
 
+def test_shell_tabs() -> None:
+    print("shell: page has Talk|Settings nav, keeps hold-to-talk, reads theme param")
+    srv = ButtonServer("127.0.0.1", 8097)
+    srv.start()
+    time.sleep(0.2)
+    try:
+        page = urllib.request.urlopen("http://127.0.0.1:8097/", timeout=2).read().decode()
+        check("hold-to-talk preserved", "Hold" in page and "/press" in page)
+        check("has Talk tab panel", 'data-tab="talk"' in page, "")
+        check("has Settings tab panel", 'data-tab="settings"' in page, "")
+        check("reads the dashboard theme param", '"theme"' in page or "'theme'" in page, "")
+    finally:
+        srv.stop()
+
+
 # --------------------------- full turn (needs server) ---------------------------
 
 class FakeBackend(AudioBackend):
@@ -341,8 +356,8 @@ def test_full_turn() -> None:
 
 def main() -> int:
     for t in (
-        test_wav_roundtrip, test_endpointer, test_button_server, test_button_auth,
-        test_entry_shim_scrapeable,
+        test_wav_roundtrip, test_endpointer, test_button_server, test_shell_tabs,
+        test_button_auth, test_entry_shim_scrapeable,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
         test_movement_caps_sequence, test_movement_base_keyframe,
