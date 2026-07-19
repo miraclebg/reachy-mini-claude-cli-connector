@@ -30,6 +30,7 @@ from reachy_app.loop import ConversationLoop
 from reachy_app.movement import (
     MovementPlayer, resolve, PRESETS, HEAD_LIMITS, BASE_LIMIT, MAX_KEYFRAMES, MAX_TOTAL_S, MIN_DUR,
 )
+from reachy_app.runtime_config import RuntimeConfig, config_actions, restart_current_app, LIVE_FIELDS
 from reachy_app.vad import SilenceEndpointer
 
 SERVER = "http://localhost:8080"
@@ -213,6 +214,93 @@ def test_entry_shim_scrapeable() -> None:
           m.group(1) if m else "<none>")
 
 
+# --------------------------- runtime config ---------------------------
+
+def _tmp_runtime_path() -> str:
+    import tempfile, os
+    d = tempfile.mkdtemp(prefix="reachy-rt-")
+    return os.path.join(d, "runtime.json")
+
+
+def test_runtime_config_persist_roundtrip() -> None:
+    print("runtime config: edits persist and reload")
+    import os
+    path = _tmp_runtime_path()
+    cfg = RuntimeConfig(path=path)
+    changed = cfg.apply_updates({"max_utterance_s": 42, "log_level": "debug"})
+    check("changed set reports both fields", changed == {"max_utterance_s", "log_level"}, str(changed))
+    check("log_level upper-cased", cfg.log_level == "DEBUG", cfg.log_level)
+    check("runtime.json written", os.path.exists(path), path)
+    # a fresh instance on the same path reloads the overlay
+    cfg2 = RuntimeConfig(path=path)
+    check("max_utterance reloaded", cfg2.max_utterance_s == 42.0, str(cfg2.max_utterance_s))
+    check("log_level reloaded", cfg2.log_level == "DEBUG", cfg2.log_level)
+    # unchanged fields still come from settings defaults, not the overlay
+    check("public_dict has exactly the 4 live fields",
+          set(cfg2.public_dict()) == set(LIVE_FIELDS), str(cfg2.public_dict()))
+
+
+def test_runtime_config_validation_atomic() -> None:
+    print("runtime config: bad input is rejected all-or-nothing")
+    path = _tmp_runtime_path()
+    cfg = RuntimeConfig(path=path)
+    before = cfg.max_utterance_s
+    raised = False
+    try:
+        # valid max_utterance paired with an invalid log_level -> whole update rejected
+        cfg.apply_updates({"max_utterance_s": 30, "log_level": "LOUD"})
+    except ValueError:
+        raised = True
+    check("invalid update raises ValueError", raised)
+    check("nothing applied on rejection (rollback)", cfg.max_utterance_s == before, str(cfg.max_utterance_s))
+    raised2 = False
+    try:
+        cfg.apply_updates({"nonsense": 1})
+    except ValueError:
+        raised2 = True
+    check("unknown field raises ValueError", raised2)
+    raised3 = False
+    try:
+        cfg.apply_updates({"request_timeout_s": 0})  # below the 1..600 floor
+    except ValueError:
+        raised3 = True
+    check("out-of-range value raises ValueError", raised3)
+    # no-op update returns an empty changed set and does not raise
+    same = cfg.apply_updates({"max_utterance_s": cfg.max_utterance_s})
+    check("no-op update -> empty changed set", same == set(), str(same))
+
+
+def test_config_actions_mapping() -> None:
+    print("runtime config: change set maps to the right actions")
+    a = config_actions({"log_level"})
+    check("log_level -> set level only", a == {"set_log_level": True, "rebuild": False, "restart_required": False}, str(a))
+    b = config_actions({"max_utterance_s"})
+    check("max_utterance -> rebuild", b["rebuild"] and not b["set_log_level"] and not b["restart_required"], str(b))
+    c = config_actions({"request_timeout_s"})
+    check("request_timeout -> rebuild", c["rebuild"], str(c))
+    d = config_actions({"reachy_media_backend"})
+    check("media_backend -> restart only", d == {"set_log_level": False, "rebuild": False, "restart_required": True}, str(d))
+    e = config_actions(set())
+    check("no change -> no action", e == {"set_log_level": False, "rebuild": False, "restart_required": False}, str(e))
+
+
+def test_restart_app_posts_daemon() -> None:
+    print("runtime config: restart_current_app posts the daemon endpoint")
+    calls = []
+    class _Resp:
+        def raise_for_status(self): pass
+    def fake_post(url, timeout=0):
+        calls.append((url, timeout))
+        return _Resp()
+    ok = restart_current_app(post=fake_post)
+    check("returns True on success", ok is True)
+    check("hits restart-current-app", calls and calls[0][0].endswith("/api/apps/restart-current-app"), str(calls))
+    def boom_post(url, timeout=0):
+        raise RuntimeError("no daemon")
+    ok2 = restart_current_app(post=boom_post)
+    check("returns False when the daemon is unreachable", ok2 is False)
+
+
 class FakeDriver:
     """Records driver calls instead of moving a robot."""
     def __init__(self) -> None:
@@ -358,6 +446,8 @@ def main() -> int:
     for t in (
         test_wav_roundtrip, test_endpointer, test_button_server, test_shell_tabs,
         test_button_auth, test_entry_shim_scrapeable,
+        test_runtime_config_persist_roundtrip, test_runtime_config_validation_atomic,
+        test_config_actions_mapping, test_restart_app_posts_daemon,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
         test_movement_caps_sequence, test_movement_base_keyframe,
