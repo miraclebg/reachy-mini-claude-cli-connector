@@ -836,6 +836,26 @@ def test_servers_view_merges_and_hides_tokens() -> None:
     check("NO token anywhere in the view", "secret-a" not in json.dumps(v), json.dumps(v)[:200])
 
 
+def test_servers_view_marks_has_token_on_discovered() -> None:
+    print("servers: discovered entries carry has_token so the UI prompts correctly")
+    store = ServerStore(path=_tmp_servers_path())
+    # NOTE: token value deliberately does NOT contain the substring "tok" — the
+    # public JSON key "has_token" itself contains "tok", which would make a naive
+    # `"tok" not in json.dumps(v)` check pass or fail for the wrong reason.
+    store.upsert("id-known", "known", "http://1.1.1.1:8080", "s3cret-value")
+
+    class _Lis:
+        def discovered(self): return [
+            {"id": "id-known", "name": "known", "url": "http://1.1.1.1:8080", "seen_at": 1.0},
+            {"id": "id-new", "name": "brand-new", "url": "http://9.9.9.9:8080", "seen_at": 2.0},
+        ]
+    v = servers_view(store, _Lis())
+    by_id = {d["id"]: d for d in v["discovered"]}
+    check("saved+credentialed -> has_token True", by_id["id-known"]["has_token"] is True, str(by_id["id-known"]))
+    check("brand-new -> has_token False", by_id["id-new"]["has_token"] is False, str(by_id["id-new"]))
+    check("still no token value", "s3cret-value" not in json.dumps(v), json.dumps(v))
+
+
 def test_select_server_verifies_then_binds() -> None:
     print("servers: select verifies the token via /whoami, then binds + rebuilds")
     store = ServerStore(path=_tmp_servers_path())
@@ -1139,7 +1159,8 @@ def main() -> int:
         test_server_store_roundtrip_and_select, test_server_store_never_leaks_token,
         test_server_store_file_is_not_world_readable,
         test_server_store_survives_corrupt_file,
-        test_servers_view_merges_and_hides_tokens, test_select_server_verifies_then_binds,
+        test_servers_view_merges_and_hides_tokens, test_servers_view_marks_has_token_on_discovered,
+        test_select_server_verifies_then_binds,
         test_select_trusts_whoami_id_over_a_claimed_id,
         test_select_reuses_stored_token_when_omitted, test_add_server_by_address,
         test_select_and_add_never_echo_the_token_value,

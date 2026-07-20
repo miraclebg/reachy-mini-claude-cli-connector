@@ -25,7 +25,7 @@ sleep 1
 
 echo "▶ starting connector server (:8080) …"
 ( cd "$ROOT/server" && source .venv/bin/activate \
-    && PIPER_MODEL="$PIPER_MODEL" exec uvicorn main:app --host 0.0.0.0 --port 8080 ) \
+    && PIPER_MODEL="$PIPER_MODEL" exec uvicorn main:app --host 0.0.0.0 --port "${PORT:-8080}" ) \
     > /tmp/connector.log 2>&1 &
 CONNECTOR_PID=$!
 

@@ -45,6 +45,8 @@
   #status[data-state="error"]          { color: #ff9d9d; border-color: #7a2b2b; }
   #status[data-state="error"] #dot     { background: var(--red); }
   #status[data-state="offline"] #dot   { background: #555; }
+  #status[data-state="parked"]         { color: var(--grey); }
+  #status[data-state="parked"] #dot    { background: var(--grey); }
   @keyframes pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.5); opacity: .6; } }
   @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
 
@@ -360,6 +362,7 @@
   const gate = document.getElementById("gate");
   const gateList = document.getElementById("gate-list");
   let srvState = { discovered: [], saved: [], selected_id: null };
+  let gateLoadStartedAt = 0;   // throttle: gate auto-load, not once per status poll
 
   function srvRow(s, online, selected) {
     const row = document.createElement("div");
@@ -412,7 +415,7 @@
   async function srvSelect(s, row) {
     // Ask for a token only when we have none stored, or the server rejected the last one.
     let token = "";
-    if (s.has_token === false || row.dataset.needsToken === "1") {
+    if (!s.has_token || row.dataset.needsToken === "1") {
       // Already prompting for this row? Focus that box instead of stacking another.
       const open = row.nextElementSibling;
       if (open && open.classList.contains("srv-tok")) {
@@ -463,12 +466,19 @@
   // show the gate whenever the app is parked (no brain bound)
   var isParked = false;   // var: read by the tab handler defined earlier in this script
   function applyGate(state) {
+    if (state === "offline") return;   // transient poll failure: leave the gate as-is
     const parked = state === "parked";
     isParked = parked;
     gate.classList.toggle("hidden", !parked);
     logEl.classList.toggle("hidden", parked);
     footer.classList.toggle("hidden", parked || document.querySelector('.seg-btn.on').dataset.tab !== "talk");
-    if (parked && !gateList.children.length) srvLoad();
+    // Throttle: applyGate runs on every 350ms status poll. Re-load at most every 10s
+    // (renderServers appends nothing when the list is empty, so a child-count check
+    // would re-fire forever on a LAN where the beacon is blocked).
+    if (parked && Date.now() - gateLoadStartedAt > 10000) {
+      gateLoadStartedAt = Date.now();
+      srvLoad();
+    }
   }
 
   document.querySelector('.seg-btn[data-tab="settings"]').addEventListener("click", srvLoad);

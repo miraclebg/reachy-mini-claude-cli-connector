@@ -181,8 +181,19 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
         sel = store.selected()
         if sel is not None:
             ok, info = verify_server(sel["url"], sel.get("token", ""))
-            if ok:
+            real_id = (info or {}).get("id") if isinstance(info, dict) else None
+            if ok and real_id == sel["id"]:
                 self.logger.info("bound last-used server %s (%s)", sel.get("name"), sel["url"])
+            elif ok:
+                # Reachable and the token works, but it is a DIFFERENT connector than the
+                # one we saved (e.g. two Macs share a token and swapped IPs). Never bind
+                # silently — the same rule select_server enforces.
+                self.logger.warning(
+                    "last-used server at %s identifies as %s, not %s — parking",
+                    sel["url"], real_id, sel["id"])
+                # Deliberately not persisted: we park for this boot but keep the saved
+                # selection so a later boot can retry it (unlike forget(), which persists).
+                store.selected_id = None
             else:
                 self.logger.warning("last-used server %s unreachable (%s) — parking",
                                     sel.get("url"), info)

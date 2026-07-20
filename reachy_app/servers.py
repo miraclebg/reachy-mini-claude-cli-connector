@@ -157,11 +157,15 @@ def servers_view(store: ServerStore, listener) -> dict:
     Never includes a token — see `public_server`.
     """
     saved = store.list_saved()
-    known = {s["id"] for s in saved}
+    saved_by_id = {s["id"]: s for s in saved}
     discovered = []
     for d in (listener.discovered() if listener is not None else []):
         e = dict(d)
-        e["saved"] = e.get("id") in known
+        known_entry = saved_by_id.get(e.get("id"))
+        e["saved"] = known_entry is not None
+        # The UI prompts for a token when has_token is false; without this a freshly
+        # discovered server looked "already credentialed" and the first tap 401'd.
+        e["has_token"] = bool(known_entry and known_entry.get("token"))
         discovered.append(e)
     return {
         "discovered": discovered,
@@ -171,7 +175,7 @@ def servers_view(store: ServerStore, listener) -> dict:
 
 
 def _bind(store: ServerStore, supervisor, server_id: str, name: str, url: str, token: str) -> dict:
-    """Save + select + restart the worker against the newly bound server."""
+    """Save + select + rebuild the worker thread against the newly bound server."""
     store.upsert(server_id, name, url, token)
     store.select(server_id)
     supervisor.rebuild()

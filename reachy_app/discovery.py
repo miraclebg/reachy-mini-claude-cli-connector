@@ -132,6 +132,9 @@ def verify_server(url: str, token: str, get=None, timeout_s: float = 5.0):
     if getattr(r, "status_code", None) != 200:
         return False, f"http {getattr(r, 'status_code', '?')}"
     try:
-        return True, r.json()
+        body = r.json()
     except Exception as e:
         return False, f"bad /whoami body: {e}"
+    if not isinstance(body, dict):
+        return False, "bad /whoami body: not a JSON object"
+    return True, body
