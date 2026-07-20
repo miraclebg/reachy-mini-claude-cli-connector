@@ -93,7 +93,10 @@ class BeaconListener:
             self._seen.clear()
 
     def start(self) -> None:
-        if self._thread is not None:
+        # Guard on liveness, not merely "a thread object exists": if a previous
+        # start() died early (e.g. the discovery port was briefly busy), we must be
+        # able to retry rather than silently no-op forever.
+        if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="reachy-discovery", daemon=True)

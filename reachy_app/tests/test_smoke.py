@@ -548,7 +548,7 @@ def test_beacon_listener_collects_and_dedupes() -> None:
 def test_beacon_listener_expires_stale() -> None:
     print("discovery: entries older than the TTL disappear")
     port = 48996
-    lis = BeaconListener(port=port, ttl_s=0.3)
+    lis = BeaconListener(port=port, ttl_s=0.6)
     lis.start()
     try:
         time.sleep(0.3)
@@ -557,6 +557,38 @@ def test_beacon_listener_expires_stale() -> None:
         check("expires after ttl", _wait_until(lambda: lis.discovered() == [], timeout=3.0), str(lis.discovered()))
     finally:
         lis.stop()
+
+
+def test_beacon_listener_survives_busy_port_and_recovers() -> None:
+    print("discovery: a busy port degrades gracefully and start() can recover later")
+    import socket as _socket
+    port = 48995
+    # Hog the port so the listener's bind() fails.
+    hog = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+    hog.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    hog.bind(("", port))
+    lis = BeaconListener(port=port, ttl_s=5.0)
+    try:
+        lis.start()                      # must NOT raise
+        check("busy port does not crash", True)
+        check("listener thread exits (nothing received)",
+              _wait_until(lambda: not lis.is_alive()), "thread still alive")
+        check("no phantom discoveries", lis.discovered() == [], str(lis.discovered()))
+    finally:
+        lis.stop()
+        hog.close()
+    # Port is free now: a retry must actually bind and work (this is the regression
+    # guard — the old start() no-opped forever once a dead thread was recorded).
+    lis2 = BeaconListener(port=port, ttl_s=5.0)
+    lis2.start()
+    try:
+        check("recovers on a free port", _wait_until(lambda: lis2.is_alive()))
+        time.sleep(0.3)
+        _send_beacon(port, {"reachy_connector": 1, "id": "r1", "name": "m", "url": "http://4.4.4.4:8080"})
+        check("receives after recovery", _wait_until(lambda: len(lis2.discovered()) == 1),
+              str(lis2.discovered()))
+    finally:
+        lis2.stop()
 
 
 def test_verify_server_token_outcomes() -> None:
@@ -774,7 +806,8 @@ def main() -> int:
         test_supervisor_crash_restarts_and_reports_error,
         test_supervisor_restarts_on_build_failure,
         test_parse_beacon_accepts_and_rejects, test_beacon_listener_collects_and_dedupes,
-        test_beacon_listener_expires_stale, test_verify_server_token_outcomes,
+        test_beacon_listener_expires_stale, test_beacon_listener_survives_busy_port_and_recovers,
+        test_verify_server_token_outcomes,
         test_apply_config_request_flow,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
