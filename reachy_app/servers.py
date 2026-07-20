@@ -14,11 +14,13 @@ the only shape that may leave the process.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
 import threading
 import time
+from urllib.parse import urlsplit
 
 from .discovery import verify_server
 
@@ -236,3 +238,49 @@ def add_server(store: ServerStore, supervisor, payload: dict,
     real_id = info.get("id") or url
     real_name = (payload.get("name") or "").strip() or info.get("name") or real_id
     return 200, {"ok": True, "server": _bind(store, supervisor, real_id, real_name, url, token)}
+
+
+def client_allowed(client_host: str | None, allow_spec: str, bound_url: str | None = None) -> bool:
+    """May this client change which connector the robot is bound to?
+
+    `:8042` is unauthenticated and binds 0.0.0.0, and a token cannot help here — the
+    page is served from the same open port, so any token given to the browser is
+    readable by any LAN client. So the mutating /servers routes are gated on source IP.
+
+    Rules:
+      * empty `allow_spec` -> open (today's behaviour; the app warns at startup)
+      * loopback is always allowed (on-robot tooling; never lock ourselves out)
+      * the currently-bound connector's host is always allowed — it is already the
+        trusted brain, and it is where the desktop dashboard runs, so the picker keeps
+        working in the embed without any configuration
+      * otherwise the client must match an entry in `allow_spec` (comma-separated bare
+        IPs and/or CIDRs, e.g. "10.10.9.15, 192.168.1.0/24")
+    """
+    if not (allow_spec or "").strip():
+        return True
+    if not client_host:
+        return False  # cannot identify the caller while restricted -> deny
+    try:
+        client_ip = ipaddress.ip_address(client_host.strip("[]"))
+    except ValueError:
+        return False
+    if client_ip.is_loopback:
+        return True
+    if bound_url:
+        host = urlsplit(bound_url).hostname
+        if host:
+            try:
+                if ipaddress.ip_address(host) == client_ip:
+                    return True
+            except ValueError:
+                pass  # bound via a hostname, not an IP -> fall through to the allowlist
+    for entry in allow_spec.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            if client_ip in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            log.warning("ignoring bad SETTINGS_ALLOW entry %r", entry)
+    return False

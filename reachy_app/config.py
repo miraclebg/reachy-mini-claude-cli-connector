@@ -68,6 +68,11 @@ class Settings:
     # The phone opens the page as .../?token=<BUTTON_TOKEN>; the page reuses it.
     button_token: str = os.environ.get("BUTTON_TOKEN", "")
 
+    # Comma-separated IPs/CIDRs allowed to CHANGE which connector the robot is bound to
+    # (POST /servers/select|add|rescan on :8042). Empty = open (a warning is logged).
+    # Loopback and the currently-bound connector's host are always allowed.
+    settings_allow: str = os.environ.get("SETTINGS_ALLOW", "")
+
     # --- wake word ("Hey Reachy" via Porcupine) ---
     # Inactive unless BOTH an access key and a keyword .ppn are provided.
     wakeword_enabled: bool = _as_bool(os.environ.get("WAKEWORD_ENABLED", "true"))

@@ -34,11 +34,12 @@ import logging
 
 from .audio import ReachyMiniBackend
 from .button_server import ButtonState, History, StatusState
+from .config import settings
 from .connector_client import ConnectorClient
 from .movement import MovementPlayer
 from .discovery import BeaconListener, verify_server
 from .runtime_config import RuntimeConfig, restart_current_app
-from .servers import ServerStore, add_server, select_server, servers_view
+from .servers import ServerStore, add_server, select_server, servers_view, client_allowed
 from .supervisor import Supervisor, apply_config_request
 
 
@@ -60,6 +61,7 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
             self.request_media_backend = mb
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
+        from fastapi import Request
         from fastapi.responses import JSONResponse, Response
 
         config = RuntimeConfig()
@@ -166,6 +168,21 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
         listener = BeaconListener()
         listener.start()
 
+        if not settings.settings_allow.strip():
+            self.logger.warning(
+                "SETTINGS_ALLOW is empty — anyone on the LAN can repoint this robot at "
+                "another connector via POST /servers/*. Set SETTINGS_ALLOW to a list of "
+                "IPs/CIDRs to restrict it.")
+
+        def _mutation_allowed(request: Request) -> bool:
+            sel = store.selected()
+            host = request.client.host if request.client else None
+            ok = client_allowed(host, settings.settings_allow, sel["url"] if sel else None)
+            if not ok:
+                self.logger.warning(
+                    "blocked a server-binding change from %s (not in SETTINGS_ALLOW)", host)
+            return ok
+
         def _bound_server() -> dict | None:
             """The server the worker should talk to, or None -> park + show the gate."""
             return store.selected()
@@ -219,19 +236,25 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
             return servers_view(store, listener)
 
         @app.post("/servers/select")
-        def _select_server(payload: dict) -> Response:
+        def _select_server(payload: dict, request: Request) -> Response:
+            if not _mutation_allowed(request):
+                return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
             code, body = select_server(store, supervisor, payload, listener=listener)
             return JSONResponse(body, status_code=code)
 
         @app.post("/servers/add")
-        def _add_server(payload: dict) -> Response:
+        def _add_server(payload: dict, request: Request) -> Response:
+            if not _mutation_allowed(request):
+                return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
             code, body = add_server(store, supervisor, payload)
             return JSONResponse(body, status_code=code)
 
         @app.post("/servers/rescan")
-        def _rescan_servers() -> dict:
+        def _rescan_servers(request: Request) -> Response:
+            if not _mutation_allowed(request):
+                return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
             listener.clear()
-            return {"ok": True}
+            return JSONResponse({"ok": True})
 
         self.logger.info("Reachy Claude connector app running — open %s to talk.", self.custom_app_url)
         supervisor.start()

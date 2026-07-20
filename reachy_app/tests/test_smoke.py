@@ -33,7 +33,9 @@ from reachy_app.movement import (
     MovementPlayer, resolve, PRESETS, HEAD_LIMITS, BASE_LIMIT, MAX_KEYFRAMES, MAX_TOTAL_S, MIN_DUR,
 )
 from reachy_app.runtime_config import RuntimeConfig, config_actions, restart_current_app, LIVE_FIELDS
-from reachy_app.servers import ServerStore, public_server, servers_view, select_server, add_server
+from reachy_app.servers import (
+    ServerStore, public_server, servers_view, select_server, add_server, client_allowed,
+)
 from reachy_app.supervisor import Supervisor
 from reachy_app.vad import SilenceEndpointer
 
@@ -962,6 +964,32 @@ def test_select_and_add_never_echo_the_token_value() -> None:
     check("token really was persisted", store.get("id-s")["token"] == secret, "not stored")
 
 
+def test_client_allowed_guard() -> None:
+    print("servers: the mutating-route IP guard (open by default, loopback + bound host free)")
+    # empty spec -> open (today's behaviour)
+    check("empty spec allows anyone", client_allowed("10.0.0.9", "") is True)
+    check("empty spec allows even unknown client", client_allowed(None, "") is True)
+    # restricted
+    spec = "10.10.9.15, 192.168.1.0/24"
+    check("listed bare IP allowed", client_allowed("10.10.9.15", spec) is True)
+    check("listed CIDR member allowed", client_allowed("192.168.1.77", spec) is True)
+    check("outsider denied", client_allowed("10.10.9.99", spec) is False)
+    check("unknown client denied while restricted", client_allowed(None, spec) is False)
+    check("garbage client denied", client_allowed("not-an-ip", spec) is False)
+    # always-allowed cases
+    check("loopback always allowed", client_allowed("127.0.0.1", spec) is True)
+    check("bound connector host always allowed",
+          client_allowed("10.10.9.15", "192.168.1.0/24", bound_url="http://10.10.9.15:8080") is True)
+    check("a DIFFERENT host is still denied when a server is bound",
+          client_allowed("10.10.9.66", "192.168.1.0/24", bound_url="http://10.10.9.15:8080") is False)
+    # hostname-bound server must not crash the check
+    check("hostname bound_url falls through safely",
+          client_allowed("10.10.9.66", "10.10.9.66", bound_url="http://my-mac.local:8080") is True)
+    # a malformed allowlist entry is ignored, not fatal
+    check("bad entry ignored, good entry still matches",
+          client_allowed("10.10.9.15", "not-a-cidr, 10.10.9.15") is True)
+
+
 def test_apply_config_request_flow() -> None:
     print("config route: apply_config_request validates, sets level, rebuilds, flags restart")
     import logging as _logging
@@ -1164,6 +1192,7 @@ def main() -> int:
         test_select_trusts_whoami_id_over_a_claimed_id,
         test_select_reuses_stored_token_when_omitted, test_add_server_by_address,
         test_select_and_add_never_echo_the_token_value,
+        test_client_allowed_guard,
         test_apply_config_request_flow,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
