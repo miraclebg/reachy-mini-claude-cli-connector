@@ -66,3 +66,16 @@ def test_beacon_stop_is_clean():
     time.sleep(0.15)
     b.stop()
     assert not b.is_alive()
+
+
+def test_whoami_payload_shape_and_no_secret():
+    from beacon import whoami_payload
+    p = whoami_payload("abc123", "studio-mac")
+    assert p["id"] == "abc123"
+    assert p["name"] == "studio-mac"
+    assert "version" in p
+    # the robot cross-checks this id against the beacon's claimed id
+    assert set(p) == {"id", "name", "version"}
+    blob = json.dumps(p).lower()
+    for forbidden in ("token", "secret", "password"):
+        assert forbidden not in blob

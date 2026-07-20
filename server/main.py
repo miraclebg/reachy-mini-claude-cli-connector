@@ -28,6 +28,9 @@ from stt import STT
 from tts import TTS, TTSError
 from vision import fetch_frame, transcript_wants_vision
 from movement import parse_move, post_move, strip_markers
+from beacon import (
+    Beacon, beacon_payload, default_server_name, local_ip, server_id, whoami_payload,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("connector")
@@ -102,6 +105,21 @@ else:
         settings.host, settings.port, settings.permission_mode,
     )
 
+# --- LAN discovery: advertise ourselves so robots can find us ---
+SERVER_ID = server_id(settings.server_id_file)
+SERVER_NAME = settings.server_name.strip() or default_server_name()
+
+beacon: Beacon | None = None
+if settings.discovery_beacon:
+    beacon = Beacon(
+        lambda: beacon_payload(SERVER_ID, SERVER_NAME, f"http://{local_ip()}:{settings.port}"),
+        port=settings.discovery_port,
+        interval_s=settings.discovery_interval_s,
+    )
+    beacon.start()
+else:
+    log.info("discovery beacon disabled (DISCOVERY_BEACON=false)")
+
 
 @app.get("/health")
 def health():
@@ -115,6 +133,14 @@ def health():
         "permission_mode": settings.permission_mode,
         "allowed_tools": settings.allowed_tools,
     }
+
+
+@app.get("/whoami")
+def whoami():
+    """Token-gated identity probe. The robot calls this to prove BOTH that we are
+    reachable AND that its stored token is right, before binding us as its brain.
+    Protected by the require_token middleware (it is not in _OPEN_PATHS)."""
+    return whoami_payload(SERVER_ID, SERVER_NAME)
 
 
 @app.post("/chat/text")

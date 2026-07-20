@@ -121,3 +121,16 @@ class Beacon:
     def is_alive(self) -> bool:
         t = self._thread
         return t is not None and t.is_alive()
+
+
+WHOAMI_VERSION = "1"
+
+
+def whoami_payload(server_id: str, name: str) -> dict:
+    """Body of the token-gated `GET /whoami`.
+
+    Returning `id` is the point: the robot compares it with the `id` the beacon
+    claimed, so a rogue beacon advertising someone else's identity fails the check
+    even if it somehow reached the robot.
+    """
+    return {"id": server_id, "name": name, "version": WHOAMI_VERSION}
