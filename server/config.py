@@ -118,5 +118,18 @@ class Settings:
     movement_enabled: bool = _as_bool(os.environ.get("MOVEMENT_ENABLED", "true"))
     move_timeout_s: float = float(os.environ.get("MOVE_TIMEOUT_S", "12"))  # > player MAX_TOTAL_S
 
+    # --- LAN discovery (robots find this connector by UDP beacon) ---
+    # The beacon advertises {id, name, url} only — never the token.
+    discovery_beacon: bool = _as_bool(os.environ.get("DISCOVERY_BEACON", "true"))
+    discovery_port: int = int(os.environ.get("DISCOVERY_PORT", "48569"))
+    discovery_interval_s: float = float(os.environ.get("DISCOVERY_INTERVAL_S", "10"))
+    # Friendly name shown in the robot's server picker. Empty = this Mac's hostname.
+    server_name: str = os.environ.get("SERVER_NAME", "")
+    # Where this connector's stable id is persisted (gitignored).
+    server_id_file: str = os.environ.get(
+        "SERVER_ID_FILE",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), ".server_id"),
+    )
+
 
 settings = Settings()

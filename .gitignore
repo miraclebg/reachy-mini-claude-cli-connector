@@ -32,3 +32,6 @@ claude-workspace/
 
 # subagent-driven-development scratch
 .superpowers/
+
+# --- Discovery beacon: per-machine stable id ---
+server/.server_id
