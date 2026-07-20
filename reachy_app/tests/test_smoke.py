@@ -842,6 +842,29 @@ def test_select_server_verifies_then_binds() -> None:
     check("unknown saved id -> 404", code4 == 404, str(body4))
 
 
+def test_select_trusts_whoami_id_over_a_claimed_id() -> None:
+    print("servers: /whoami's id wins over a spoofed/claimed id (anti-spoofing)")
+    store = ServerStore(path=_tmp_servers_path())
+    sup = _FakeSup()
+
+    class _Lis:
+        # A beacon claims to be "id-victim" and points at 6.6.6.6.
+        def discovered(self):
+            return [{"id": "id-victim", "name": "victim", "url": "http://6.6.6.6:8080", "seen_at": 1.0}]
+
+    # But the server actually AT that url, per its own /whoami, is "id-real".
+    def verify(url, token, **k):
+        return True, {"id": "id-real", "name": "actual", "version": "1"}
+    code, body = select_server(store, sup, {"id": "id-victim", "token": "t"},
+                               listener=_Lis(), verify=verify)
+    check("select succeeds", code == 200, str(body))
+    check("saved under /whoami's id, NOT the claimed one",
+          store.get("id-real") is not None and store.get("id-victim") is None,
+          str(store.list_saved()))
+    check("selection is /whoami's id", store.selected_id == "id-real", str(store.selected_id))
+    check("response reports the real id", body["server"]["id"] == "id-real", str(body))
+
+
 def test_select_reuses_stored_token_when_omitted() -> None:
     print("servers: selecting a saved server reuses its stored token")
     store = ServerStore(path=_tmp_servers_path())
@@ -868,6 +891,34 @@ def test_add_server_by_address() -> None:
     bad = lambda url, token, **k: (False, "unauthorized")
     code3, body3 = add_server(store, sup, {"url": "http://8.8.8.8:8080", "token": "x"}, verify=bad)
     check("unverified -> 401, not saved", code3 == 401 and store.get("id-x") is None, str(body3))
+
+
+def test_select_and_add_never_echo_the_token_value() -> None:
+    print("servers: select/add responses never echo the token VALUE")
+    import json as _json
+    secret = "sup3r-select-secret-9f3a"
+    verify = lambda url, token, **k: (True, {"id": "id-s", "name": "mac", "version": "1"})
+
+    store = ServerStore(path=_tmp_servers_path())
+    code, body = select_server(store, _FakeSup(),
+                               {"url": "http://1.1.1.1:8080", "token": secret}, verify=verify)
+    blob = _json.dumps(body)
+    check("select -> 200", code == 200, blob)
+    check("select response omits the token value", secret not in blob, blob)
+    check("select response exposes only has_token",
+          body["server"].get("has_token") is True and "token" not in body["server"], blob)
+
+    store2 = ServerStore(path=_tmp_servers_path())
+    code2, body2 = add_server(store2, _FakeSup(),
+                              {"url": "http://2.2.2.2:8080", "token": secret}, verify=verify)
+    blob2 = _json.dumps(body2)
+    check("add -> 200", code2 == 200, blob2)
+    check("add response omits the token value", secret not in blob2, blob2)
+    check("add response exposes only has_token",
+          body2["server"].get("has_token") is True and "token" not in body2["server"], blob2)
+
+    # the token IS still stored on disk (that is required) — prove the split
+    check("token really was persisted", store.get("id-s")["token"] == secret, "not stored")
 
 
 def test_apply_config_request_flow() -> None:
@@ -1067,7 +1118,9 @@ def main() -> int:
         test_server_store_file_is_not_world_readable,
         test_server_store_survives_corrupt_file,
         test_servers_view_merges_and_hides_tokens, test_select_server_verifies_then_binds,
+        test_select_trusts_whoami_id_over_a_claimed_id,
         test_select_reuses_stored_token_when_omitted, test_add_server_by_address,
+        test_select_and_add_never_echo_the_token_value,
         test_apply_config_request_flow,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
