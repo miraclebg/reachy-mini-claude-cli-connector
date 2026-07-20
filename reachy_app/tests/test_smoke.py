@@ -32,6 +32,7 @@ from reachy_app.movement import (
     MovementPlayer, resolve, PRESETS, HEAD_LIMITS, BASE_LIMIT, MAX_KEYFRAMES, MAX_TOTAL_S, MIN_DUR,
 )
 from reachy_app.runtime_config import RuntimeConfig, config_actions, restart_current_app, LIVE_FIELDS
+from reachy_app.servers import ServerStore, public_server
 from reachy_app.supervisor import Supervisor
 from reachy_app.vad import SilenceEndpointer
 
@@ -618,6 +619,61 @@ def test_verify_server_token_outcomes() -> None:
     check("unreachable -> not verified", ok4 is False and "no route" in err4.lower(), str(err4))
 
 
+def _tmp_servers_path() -> str:
+    import os, tempfile
+    return os.path.join(tempfile.mkdtemp(prefix="reachy-srv-"), "servers.json")
+
+
+def test_server_store_roundtrip_and_select() -> None:
+    print("servers: store persists, selects, and reloads")
+    p = _tmp_servers_path()
+    s = ServerStore(path=p)
+    check("starts empty", s.list_saved() == [] and s.selected() is None)
+    s.upsert("id-a", "studio", "http://1.1.1.1:8080", "tok-a")
+    s.upsert("id-b", "office", "http://2.2.2.2:8080", "tok-b")
+    check("two saved", len(s.list_saved()) == 2, str(s.list_saved()))
+    check("select unknown -> False", s.select("nope") is False)
+    check("select known -> True", s.select("id-b") is True)
+    check("selected is id-b", s.selected() and s.selected()["id"] == "id-b", str(s.selected()))
+    s2 = ServerStore(path=p)  # reload from disk
+    check("selection persisted", s2.selected_id == "id-b", str(s2.selected_id))
+    check("token persisted (on disk, not over HTTP)", s2.get("id-b")["token"] == "tok-b")
+    check("upsert updates in place", (s2.upsert("id-a", "studio2", "http://9.9.9.9:8080", "tok-a2"),
+                                      len(s2.list_saved()))[1] == 2, str(s2.list_saved()))
+    check("updated fields stuck", s2.get("id-a")["url"] == "http://9.9.9.9:8080", str(s2.get("id-a")))
+    check("forget removes", s2.forget("id-a") is True and s2.get("id-a") is None)
+
+
+def test_server_store_never_leaks_token() -> None:
+    print("servers: the public projection hides the token")
+    p = _tmp_servers_path()
+    s = ServerStore(path=p)
+    s.upsert("id-a", "studio", "http://1.1.1.1:8080", "sup3rs3cret")
+    pub = public_server(s.get("id-a"))
+    check("has_token flag instead of the token", pub.get("has_token") is True, str(pub))
+    check("token value absent", "token" not in pub, str(pub))
+    check("secret string nowhere in the projection", "sup3rs3cret" not in str(pub), str(pub))
+    check("keeps id/name/url", pub["id"] == "id-a" and pub["name"] == "studio"
+          and pub["url"] == "http://1.1.1.1:8080", str(pub))
+    s.upsert("id-c", "no-token", "http://3.3.3.3:8080", "")
+    check("empty token -> has_token False", public_server(s.get("id-c"))["has_token"] is False)
+
+
+def test_server_store_survives_corrupt_file() -> None:
+    print("servers: a corrupt or non-dict store degrades to empty, not a crash")
+    p = _tmp_servers_path()
+    import os
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write("{not json")
+    s = ServerStore(path=p)  # must not raise
+    check("corrupt -> empty store", s.list_saved() == [] and s.selected() is None)
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write("[1,2,3]")
+    s2 = ServerStore(path=p)  # non-dict JSON must not raise either
+    check("non-dict -> empty store", s2.list_saved() == [])
+
+
 def test_apply_config_request_flow() -> None:
     print("config route: apply_config_request validates, sets level, rebuilds, flags restart")
     import logging as _logging
@@ -809,6 +865,8 @@ def main() -> int:
         test_parse_beacon_accepts_and_rejects, test_beacon_listener_collects_and_dedupes,
         test_beacon_listener_expires_stale, test_beacon_listener_survives_busy_port_and_recovers,
         test_verify_server_token_outcomes,
+        test_server_store_roundtrip_and_select, test_server_store_never_leaks_token,
+        test_server_store_survives_corrupt_file,
         test_apply_config_request_flow,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
