@@ -167,6 +167,27 @@ def test_settings_panel() -> None:
         srv.stop()
 
 
+def test_server_picker_and_gate_markup() -> None:
+    print("servers ui: picker in Settings and the parked gate in Talk")
+    srv = ButtonServer("127.0.0.1", 8095)
+    srv.start()
+    time.sleep(0.2)
+    try:
+        page = urllib.request.urlopen("http://127.0.0.1:8095/", timeout=2).read().decode()
+        check("picker container present", 'id="srv-list"' in page, "")
+        check("talks to /servers", "/servers" in page, "")
+        check("can select a server", "/servers/select" in page, "")
+        check("has add-by-address", "/servers/add" in page, "")
+        check("has rescan", "/servers/rescan" in page, "")
+        check("gate element present", 'id="gate"' in page, "")
+        check("gate reacts to parked state", '"parked"' in page or "'parked'" in page, "")
+        # the Talk tab and Phase-2 config panel must survive
+        check("hold-to-talk preserved", "Hold" in page and "/press" in page, "")
+        check("config panel preserved", 'data-cfg="max_utterance_s"' in page, "")
+    finally:
+        srv.stop()
+
+
 # --------------------------- full turn (needs server) ---------------------------
 
 class FakeBackend(AudioBackend):
@@ -1101,6 +1122,7 @@ def main() -> int:
     for t in (
         test_wav_roundtrip, test_endpointer, test_button_server, test_shell_tabs,
         test_settings_panel,
+        test_server_picker_and_gate_markup,
         test_button_auth, test_entry_shim_scrapeable,
         test_runtime_config_persist_roundtrip, test_runtime_config_validation_atomic,
         test_runtime_config_robust_load_and_types,

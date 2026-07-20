@@ -88,6 +88,33 @@
   .cfg-btn { width: 100%; padding: .7rem; margin: .3rem 0 .6rem; border: none; border-radius: .6rem;
              background: var(--amber); color: #1c1e22; font: inherit; font-weight: 600; cursor: pointer; }
   .cfg-btn:disabled { opacity: .45; cursor: default; }
+  .cfg-btn.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+  .srv-list { display: flex; flex-direction: column; gap: .4rem; padding: .5rem 0; }
+  .srv-row { display: flex; align-items: center; gap: .6rem; padding: .6rem .7rem;
+             border: 1px solid var(--line); border-radius: .6rem; background: var(--bg); cursor: pointer; }
+  .srv-row.offline { opacity: .45; }
+  .srv-row.on { border-color: var(--orange); }
+  .srv-dot { width: .6rem; height: .6rem; border-radius: 50%; background: var(--grey); flex: 0 0 auto; }
+  .srv-row.online .srv-dot { background: var(--green); }
+  .srv-meta { flex: 1 1 auto; min-width: 0; }
+  .srv-name { font-weight: 600; font-size: .95rem; }
+  .srv-url { font-size: .75rem; opacity: .55; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .srv-badge { font-size: .6rem; letter-spacing: .05em; padding: .15rem .4rem; border-radius: .3rem;
+               background: var(--line); text-transform: uppercase; }
+  .srv-tok { display: flex; gap: .4rem; padding: .1rem 0 .5rem; }
+  .srv-tok.hidden { display: none; }
+  .srv-tok input { flex: 1 1 auto; background: var(--bg); color: var(--fg);
+                   border: 1px solid var(--line); border-radius: .5rem; padding: .4rem .5rem; font: inherit; }
+  .srv-actions { display: flex; gap: .5rem; }
+  .srv-add { display: flex; flex-direction: column; gap: .4rem; padding: .2rem 0 .6rem; }
+  .srv-add.hidden { display: none; }
+  .srv-add input { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+                   border-radius: .5rem; padding: .5rem; font: inherit; }
+  .gate { margin: auto; padding: 1.5rem; text-align: center; max-width: 22rem; }
+  .gate.hidden { display: none; }
+  .gate-title { font-size: 1.1rem; font-weight: 600; margin-bottom: .3rem; }
+  .gate-sub { font-size: .85rem; opacity: .6; margin-bottom: 1rem; }
+  #gate ~ #log.hidden { display: none; }
 
   footer { flex: 0 0 auto; padding: .9rem 1rem calc(.9rem + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
   footer.hidden { display: none; }
@@ -120,11 +147,32 @@
 
   <main>
     <section id="tab-talk" class="tab" data-tab="talk">
+      <div id="gate" class="gate hidden">
+        <div class="gate-title">🧠 Pick a brain to start</div>
+        <div class="gate-sub">Reachy isn't connected to a Mac yet.</div>
+        <div id="gate-list" class="srv-list"></div>
+        <button id="gate-settings" class="cfg-btn">Open server settings</button>
+      </div>
       <div id="log"><div id="empty">Hold the button and say something to Reachy…</div></div>
     </section>
     <section id="tab-settings" class="tab hidden" data-tab="settings">
       <div id="cfg">
         <p id="cfg-note" class="cfg-note">Loading settings…</p>
+
+        <div class="cfg-group">
+          <div class="cfg-label">Server connection</div>
+          <div id="srv-list" class="srv-list"></div>
+          <p id="srv-note" class="cfg-note">Looking for connector Macs…</p>
+          <div class="srv-actions">
+            <button id="srv-rescan" class="cfg-btn ghost">⟳ Rescan</button>
+            <button id="srv-addtoggle" class="cfg-btn ghost">＋ Add by address</button>
+          </div>
+          <div id="srv-add" class="srv-add hidden">
+            <input id="srv-add-url" type="text" placeholder="http://192.168.1.20:8080" />
+            <input id="srv-add-token" type="password" placeholder="token" />
+            <button id="srv-add-go" class="cfg-btn">Connect</button>
+          </div>
+        </div>
 
         <div class="cfg-group">
           <label class="cfg-row">
@@ -196,8 +244,12 @@
   const AUTH = TOKEN ? { "X-Auth-Token": TOKEN } : {};
 
   const LABELS = { idle: "Ready", listening: "Listening…", thinking: "Thinking…",
-                   speaking: "Speaking…", error: "Error", offline: "Offline" };
-  function renderStatus(state) { statusEl.dataset.state = state; labelEl.textContent = LABELS[state] || state; }
+                   speaking: "Speaking…", error: "Error", offline: "Offline",
+                   parked: "No server" };
+  function renderStatus(state) {
+    statusEl.dataset.state = state; labelEl.textContent = LABELS[state] || state;
+    if (typeof applyGate === "function") applyGate(state);
+  }
 
   async function post(path) {
     try { await fetch(path, { method: "POST", headers: AUTH, keepalive: true }); }
@@ -300,6 +352,117 @@
 
   // load config the first time Settings is opened
   document.querySelector('.seg-btn[data-tab="settings"]').addEventListener("click", cfgLoad);
+
+  // ---- server picker (Settings) + parked gate (Talk) ----
+  const srvList = document.getElementById("srv-list");
+  const srvNote = document.getElementById("srv-note");
+  const gate = document.getElementById("gate");
+  const gateList = document.getElementById("gate-list");
+  let srvState = { discovered: [], saved: [], selected_id: null };
+
+  function srvRow(s, online, selected) {
+    const row = document.createElement("div");
+    row.className = "srv-row" + (online ? " online" : " offline") + (selected ? " on" : "");
+    const dot = document.createElement("span"); dot.className = "srv-dot";
+    const meta = document.createElement("div"); meta.className = "srv-meta";
+    const nm = document.createElement("div"); nm.className = "srv-name"; nm.textContent = s.name || s.id;
+    const u = document.createElement("div"); u.className = "srv-url"; u.textContent = s.url || "";
+    meta.appendChild(nm); meta.appendChild(u);
+    row.appendChild(dot); row.appendChild(meta);
+    if (selected) { const b = document.createElement("span"); b.className = "srv-badge"; b.textContent = "last used"; row.appendChild(b); }
+    row.addEventListener("click", () => srvSelect(s, row));
+    return row;
+  }
+
+  function renderServers(target) {
+    if (!target) return;
+    target.innerHTML = "";
+    const online = new Set(srvState.discovered.map(d => d.id));
+    const merged = [];
+    srvState.discovered.forEach(d => merged.push(d));
+    srvState.saved.forEach(s => { if (!online.has(s.id)) merged.push(s); });
+    if (!merged.length) {
+      srvNote && (srvNote.textContent = "No connector Macs found. Use ＋ Add by address.");
+      return;
+    }
+    merged.forEach(s => target.appendChild(srvRow(s, online.has(s.id), s.id === srvState.selected_id)));
+    srvNote && (srvNote.textContent = "Tap a Mac to connect.");
+  }
+
+  async function srvLoad() {
+    try {
+      srvState = await (await fetch("/servers", { headers: AUTH, cache: "no-store" })).json();
+      renderServers(srvList); renderServers(gateList);
+    } catch (e) {
+      srvNote && (srvNote.textContent = "Server list unavailable here.");
+    }
+  }
+
+  async function srvPost(path, body) {
+    try {
+      const res = await fetch(path, {
+        method: "POST", headers: { "Content-Type": "application/json", ...AUTH },
+        body: JSON.stringify(body),
+      });
+      return { ok: res.ok, data: await res.json().catch(() => ({})) };
+    } catch (e) { return { ok: false, data: { error: "unreachable" } }; }
+  }
+
+  async function srvSelect(s, row) {
+    // Ask for a token only when we have none stored, or the server rejected the last one.
+    let token = "";
+    if (s.has_token === false || row.dataset.needsToken === "1") {
+      const box = document.createElement("div"); box.className = "srv-tok";
+      const inp = document.createElement("input"); inp.type = "password"; inp.placeholder = "token";
+      const go = document.createElement("button"); go.className = "cfg-btn"; go.textContent = "Connect";
+      box.appendChild(inp); box.appendChild(go); row.after(box); inp.focus();
+      go.addEventListener("click", async () => {
+        const out = await srvPost("/servers/select", { id: s.id, url: s.url, token: inp.value });
+        box.remove();
+        if (!out.ok) { row.dataset.needsToken = "1"; srvNote && (srvNote.textContent = out.data.error || "Rejected"); }
+        else { srvNote && (srvNote.textContent = "Connected."); srvLoad(); }
+      });
+      return;
+    }
+    srvNote && (srvNote.textContent = "Connecting…");
+    const out = await srvPost("/servers/select", { id: s.id, url: s.url, token });
+    if (!out.ok) { row.dataset.needsToken = "1"; srvNote && (srvNote.textContent = out.data.error || "Rejected"); }
+    else { srvNote && (srvNote.textContent = "Connected."); srvLoad(); }
+  }
+
+  const srvRescan = document.getElementById("srv-rescan");
+  if (srvRescan) srvRescan.addEventListener("click", async () => {
+    srvNote && (srvNote.textContent = "Rescanning…");
+    await srvPost("/servers/rescan", {}); setTimeout(srvLoad, 1200);
+  });
+  const srvAddToggle = document.getElementById("srv-addtoggle");
+  if (srvAddToggle) srvAddToggle.addEventListener("click", () =>
+    document.getElementById("srv-add").classList.toggle("hidden"));
+  const srvAddGo = document.getElementById("srv-add-go");
+  if (srvAddGo) srvAddGo.addEventListener("click", async () => {
+    const url = document.getElementById("srv-add-url").value.trim();
+    const tok = document.getElementById("srv-add-token").value;
+    if (!url) return;
+    srvNote && (srvNote.textContent = "Connecting…");
+    const out = await srvPost("/servers/add", { url, token: tok });
+    srvNote && (srvNote.textContent = out.ok ? "Connected." : (out.data.error || "Rejected"));
+    if (out.ok) { document.getElementById("srv-add").classList.add("hidden"); srvLoad(); }
+  });
+  const gateSettings = document.getElementById("gate-settings");
+  if (gateSettings) gateSettings.addEventListener("click", () =>
+    document.querySelector('.seg-btn[data-tab="settings"]').click());
+
+  // show the gate whenever the app is parked (no brain bound)
+  function applyGate(state) {
+    const parked = state === "parked";
+    gate.classList.toggle("hidden", !parked);
+    logEl.classList.toggle("hidden", parked);
+    footer.classList.toggle("hidden", parked || document.querySelector('.seg-btn.on').dataset.tab !== "talk");
+    if (parked && !gateList.children.length) srvLoad();
+  }
+
+  document.querySelector('.seg-btn[data-tab="settings"]').addEventListener("click", srvLoad);
+  srvLoad();
 </script>
 </body>
 </html>
