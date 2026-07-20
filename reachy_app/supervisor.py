@@ -50,6 +50,11 @@ class Supervisor:
         self._crash_backoff = crash_backoff
         # Returns {"url", "token"} for the bound server, or None -> park (no worker).
         # None provider = Phase-2 behaviour: always run, using config's url/token.
+        #
+        # CONTRACT: this callable is invoked while the supervisor's (non-reentrant)
+        # lock is held, so it MUST NOT call back into this Supervisor (rebuild/start/
+        # stop) or block — doing so deadlocks the app permanently. Keep it a cheap,
+        # side-effect-free read (today: `store.selected()`).
         self._server_provider = server_provider
         self._parked = False
         self._lock = threading.Lock()
@@ -68,7 +73,12 @@ class Supervisor:
 
     def _build_loop(self) -> ConversationLoop:
         p = self._config.worker_params()
-        srv = self._current_server() or {"url": p["connector_url"], "token": p["connector_token"]}
+        srv = self._current_server()
+        if srv is None:
+            # A provider that returns None means "unbound". Never silently substitute
+            # the config's server — the design forbids auto-switching. _worker_main
+            # checks for this before building, so reaching here is a programming error.
+            raise RuntimeError("no server bound; refusing to fall back to the config server")
         client = self._client_factory(
             srv["url"], timeout_s=p["request_timeout_s"], token=srv.get("token", ""),
         )
@@ -85,6 +95,15 @@ class Supervisor:
     def _worker_main(self, stop: threading.Event) -> None:
         crashes = 0
         while not stop.is_set():
+            # Re-check on every iteration (including crash-retries): if the server was
+            # unbound while we were backing off, park rather than retrying against
+            # some other server.
+            if self._server_provider is not None and self._current_server() is None:
+                self._parked = True
+                self.current_loop = None
+                self._status.set("parked")
+                log.info("server unbound while running — parking")
+                break
             try:
                 loop = self._build_loop()
                 self.current_loop = loop

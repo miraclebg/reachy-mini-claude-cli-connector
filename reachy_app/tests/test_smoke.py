@@ -553,6 +553,35 @@ def test_supervisor_binds_the_provided_server() -> None:
         sup.stop()
 
 
+def test_supervisor_parks_when_unbound_mid_run() -> None:
+    print("supervisor: unbinding mid-run parks; never silently falls back to the config server")
+    cfg = RuntimeConfig(path=_tmp_runtime_path())
+    status = StatusState()
+    bound = {"v": {"url": "http://5.5.5.5:8080", "token": "t"}}
+    factory = _RecordingClientFactory()
+
+    class _CrashBackend(FakeBackend):
+        def enter_idle(self):
+            raise RuntimeError("boom")   # keep the worker in the crash-retry loop
+
+    fake = _CrashBackend(pcm_to_wav(np.zeros(1600, dtype=np.float32), 16000))
+    sup = Supervisor(backend=fake, config=cfg, button=ButtonState(), status=status,
+                     history=History(), client_factory=factory,
+                     server_provider=lambda: bound["v"], crash_backoff=(0.05,))
+    sup.start()
+    try:
+        check("worker entered the crash-retry loop", _wait_until(lambda: status.get() == "error"))
+        bound["v"] = None                      # unbind while it is retrying
+        check("parks instead of retrying against another server",
+              _wait_until(lambda: status.get() == "parked", timeout=5.0), status.get())
+        config_url = cfg.worker_params()["connector_url"]
+        urls = {c[0] for c in factory.calls}
+        check("never built a client for the config url", config_url not in urls,
+              f"config_url={config_url} built={urls}")
+    finally:
+        sup.stop()
+
+
 def _send_beacon(port, obj) -> None:
     import json as _json, socket as _socket
     s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
@@ -948,6 +977,7 @@ def main() -> int:
         test_supervisor_crash_restarts_and_reports_error,
         test_supervisor_restarts_on_build_failure,
         test_supervisor_parks_without_a_server, test_supervisor_binds_the_provided_server,
+        test_supervisor_parks_when_unbound_mid_run,
         test_parse_beacon_accepts_and_rejects, test_beacon_listener_collects_and_dedupes,
         test_beacon_listener_expires_stale, test_beacon_listener_survives_busy_port_and_recovers,
         test_verify_server_token_outcomes,
