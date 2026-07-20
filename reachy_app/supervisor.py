@@ -39,6 +39,7 @@ class Supervisor:
         history: History,
         client_factory: Callable[..., ConnectorClient] = ConnectorClient,
         crash_backoff: tuple[float, ...] = (1.0, 2.0, 5.0, 10.0),
+        server_provider: Callable[[], dict | None] | None = None,
     ) -> None:
         self._backend = backend
         self._config = config
@@ -47,6 +48,10 @@ class Supervisor:
         self._history = history
         self._client_factory = client_factory
         self._crash_backoff = crash_backoff
+        # Returns {"url", "token"} for the bound server, or None -> park (no worker).
+        # None provider = Phase-2 behaviour: always run, using config's url/token.
+        self._server_provider = server_provider
+        self._parked = False
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()   # signals the CURRENT worker to exit
@@ -54,10 +59,18 @@ class Supervisor:
         self.current_loop: ConversationLoop | None = None
 
     # -- building the loop from current config --
+    def _current_server(self) -> dict | None:
+        """The bound server, or None when parked. Falls back to config (Phase 2)."""
+        if self._server_provider is None:
+            p = self._config.worker_params()
+            return {"url": p["connector_url"], "token": p["connector_token"]}
+        return self._server_provider()
+
     def _build_loop(self) -> ConversationLoop:
         p = self._config.worker_params()
+        srv = self._current_server() or {"url": p["connector_url"], "token": p["connector_token"]}
         client = self._client_factory(
-            p["connector_url"], timeout_s=p["request_timeout_s"], token=p["connector_token"],
+            srv["url"], timeout_s=p["request_timeout_s"], token=srv.get("token", ""),
         )
         return ConversationLoop(
             backend=self._backend,
@@ -107,6 +120,15 @@ class Supervisor:
             self._stop_worker_locked()
 
     def _spawn_locked(self) -> None:
+        if self._current_server() is None:
+            # No brain bound: run no worker at all and let the UI show the gate.
+            self._parked = True
+            self._thread = None
+            self.current_loop = None
+            self._status.set("parked")
+            log.info("no server bound — parked (UI shows the picker)")
+            return
+        self._parked = False
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._worker_main, args=(self._stop,), name="reachy-worker", daemon=True,
@@ -124,6 +146,9 @@ class Supervisor:
     def _thread_alive(self) -> bool:
         t = self._thread
         return t is not None and t.is_alive()
+
+    def is_parked(self) -> bool:
+        return self._parked
 
 
 def apply_config_request(config: RuntimeConfig, supervisor: "Supervisor", payload: dict) -> tuple[int, dict]:

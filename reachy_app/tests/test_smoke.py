@@ -500,6 +500,59 @@ def test_supervisor_restarts_on_build_failure() -> None:
     check("thread stopped after recovery", not sup._thread_alive())
 
 
+def test_supervisor_parks_without_a_server() -> None:
+    print("supervisor: no bound server -> parked, no worker, status 'parked'")
+    cfg = RuntimeConfig(path=_tmp_runtime_path())
+    status = StatusState()
+    bound = {"v": None}  # nothing bound yet
+    fake = FakeBackend(pcm_to_wav(np.zeros(1600, dtype=np.float32), 16000))
+    sup = Supervisor(backend=fake, config=cfg, button=ButtonState(),
+                     status=status, history=History(),
+                     client_factory=_RecordingClientFactory(),
+                     server_provider=lambda: bound["v"])
+    sup.start()
+    try:
+        check("parked", sup.is_parked() is True)
+        check("no worker thread", not sup._thread_alive())
+        check("status published as parked", _wait_until(lambda: status.get() == "parked"), status.get())
+        check("no loop built", sup.current_loop is None, str(sup.current_loop))
+        # bind a server and rebuild -> worker starts
+        bound["v"] = {"url": "http://1.1.1.1:8080", "token": "t"}
+        sup.rebuild()
+        check("worker runs once bound", _wait_until(lambda: sup.current_loop is not None))
+        check("not parked anymore", sup.is_parked() is False)
+        # unbind -> parks again, worker torn down
+        bound["v"] = None
+        sup.rebuild()
+        check("parks again on unbind", _wait_until(lambda: not sup._thread_alive()))
+        check("is_parked true again", sup.is_parked() is True)
+    finally:
+        sup.stop()
+
+
+def test_supervisor_binds_the_provided_server() -> None:
+    print("supervisor: the bound server's url+token reach the rebuilt client")
+    cfg = RuntimeConfig(path=_tmp_runtime_path())
+    factory = _RecordingClientFactory()
+    bound = {"v": {"url": "http://5.5.5.5:8080", "token": "tok-5"}}
+    fake = FakeBackend(pcm_to_wav(np.zeros(1600, dtype=np.float32), 16000))
+    sup = Supervisor(backend=fake, config=cfg, button=ButtonState(),
+                     status=StatusState(), history=History(),
+                     client_factory=factory, server_provider=lambda: bound["v"])
+    sup.start()
+    try:
+        check("worker built", _wait_until(lambda: sup.current_loop is not None))
+        check("client got the bound url", factory.calls[-1][0] == "http://5.5.5.5:8080", str(factory.calls[-1]))
+        check("client got the bound token", factory.calls[-1][2] == "tok-5", str(factory.calls[-1]))
+        bound["v"] = {"url": "http://6.6.6.6:8080", "token": "tok-6"}
+        sup.rebuild()
+        check("switch rebinds url", _wait_until(lambda: factory.calls[-1][0] == "http://6.6.6.6:8080"),
+              str(factory.calls[-1]))
+        check("switch rebinds token", factory.calls[-1][2] == "tok-6", str(factory.calls[-1]))
+    finally:
+        sup.stop()
+
+
 def _send_beacon(port, obj) -> None:
     import json as _json, socket as _socket
     s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
@@ -880,6 +933,7 @@ def main() -> int:
         test_supervisor_rebuild_swaps_params, test_supervisor_stop_is_clean,
         test_supervisor_crash_restarts_and_reports_error,
         test_supervisor_restarts_on_build_failure,
+        test_supervisor_parks_without_a_server, test_supervisor_binds_the_provided_server,
         test_parse_beacon_accepts_and_rejects, test_beacon_listener_collects_and_dedupes,
         test_beacon_listener_expires_stale, test_beacon_listener_survives_busy_port_and_recovers,
         test_verify_server_token_outcomes,
