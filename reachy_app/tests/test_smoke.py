@@ -965,6 +965,43 @@ def test_select_and_add_never_echo_the_token_value() -> None:
     check("token really was persisted", store.get("id-s")["token"] == secret, "not stored")
 
 
+def test_app_request_annotation_is_module_level() -> None:
+    print("app: `Request` must be imported at MODULE level (PEP 563 + FastAPI trap)")
+    # app.py uses `from __future__ import annotations`, so annotations are strings and
+    # FastAPI resolves route-parameter annotations via typing.get_type_hints() against
+    # MODULE globals. A `Request` imported inside run() is invisible there, and FastAPI
+    # silently turns `request: Request` into a required QUERY param -> every guarded
+    # route 422s for everyone. We shipped exactly that. app.py imports reachy_mini so we
+    # cannot import it here — check the source statically instead.
+    import ast
+    import os
+    src_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app.py")
+    tree = ast.parse(open(src_path, encoding="utf-8").read())
+
+    module_level_names = set()
+    for node in tree.body:  # tree.body == module level only, by construction
+        if isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                module_level_names.add(a.asname or a.name)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                module_level_names.add((a.asname or a.name).split(".")[0])
+
+    # every parameter annotated `Request` anywhere in the file
+    annotated = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for arg in list(node.args.args) + list(node.args.kwonlyargs):
+                if isinstance(arg.annotation, ast.Name) and arg.annotation.id == "Request":
+                    annotated.append(f"{node.name}({arg.arg})")
+
+    check("some route/helper does annotate `Request`", bool(annotated), "none found")
+    check("`Request` is imported at module level", "Request" in module_level_names,
+          f"module-level names lack Request; annotated: {annotated}")
+    check("uses postponed annotations (why this matters)",
+          any(isinstance(n, ast.ImportFrom) and n.module == "__future__" for n in tree.body), "")
+
+
 def test_client_allowed_guard() -> None:
     print("servers: the mutating-route IP guard (open by default, loopback + bound host free)")
     # empty spec -> open (today's behaviour)
@@ -1217,7 +1254,7 @@ def main() -> int:
         test_select_trusts_whoami_id_over_a_claimed_id,
         test_select_reuses_stored_token_when_omitted, test_add_server_by_address,
         test_select_and_add_never_echo_the_token_value,
-        test_client_allowed_guard,
+        test_app_request_annotation_is_module_level, test_client_allowed_guard,
         test_bound_server_cannot_vouch_for_itself_across_a_policy_change,
         test_apply_config_request_flow,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,

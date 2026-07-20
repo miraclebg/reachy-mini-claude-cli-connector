@@ -30,6 +30,15 @@ for _s in (sys.stdout, sys.stderr):
 from reachy_mini import ReachyMini, ReachyMiniApp
 from reachy_mini.utils import create_head_pose
 
+# MUST be module-level. This file uses `from __future__ import annotations`, so every
+# annotation is a string, and FastAPI resolves route-parameter annotations with
+# typing.get_type_hints() against MODULE globals. A `Request` imported inside run() is
+# invisible there, and FastAPI then silently degrades `request: Request` into a required
+# QUERY parameter — every guarded route 422s for everyone. (Shipped exactly that bug once;
+# test_app_request_annotation_is_module_level guards it, since app.py can't be imported
+# by the test suite.)
+from fastapi import Request
+
 import logging
 
 from .audio import ReachyMiniBackend
@@ -63,7 +72,6 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
             self.request_media_backend = mb
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
-        from fastapi import Request
         from fastapi.responses import JSONResponse, Response
 
         config = RuntimeConfig()
