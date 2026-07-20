@@ -20,6 +20,8 @@ import os
 import threading
 import time
 
+from .discovery import verify_server
+
 log = logging.getLogger("reachy.servers")
 
 SERVERS_PATH = os.environ.get(
@@ -147,3 +149,86 @@ class ServerStore:
             if changed:
                 self._save_locked()
             return changed
+
+
+def servers_view(store: ServerStore, listener) -> dict:
+    """Body of `GET /servers`: who is out there, who we know, who is bound.
+
+    Never includes a token — see `public_server`.
+    """
+    saved = store.list_saved()
+    known = {s["id"] for s in saved}
+    discovered = []
+    for d in (listener.discovered() if listener is not None else []):
+        e = dict(d)
+        e["saved"] = e.get("id") in known
+        discovered.append(e)
+    return {
+        "discovered": discovered,
+        "saved": [public_server(s) for s in saved],
+        "selected_id": store.selected_id,
+    }
+
+
+def _bind(store: ServerStore, supervisor, server_id: str, name: str, url: str, token: str) -> dict:
+    """Save + select + restart the worker against the newly bound server."""
+    store.upsert(server_id, name, url, token)
+    store.select(server_id)
+    supervisor.rebuild()
+    return public_server(store.get(server_id))
+
+
+def select_server(store: ServerStore, supervisor, payload: dict,
+                  listener=None, verify=verify_server) -> tuple[int, dict]:
+    """Body of `POST /servers/select` — `{id?|url?, token?}`.
+
+    Resolves the target (a saved id, a discovered id, or a raw url), proves it with
+    the token via `/whoami`, then binds it. We never bind on a beacon alone.
+    """
+    payload = payload or {}
+    server_id = (payload.get("id") or "").strip()
+    url = (payload.get("url") or "").strip()
+    token = payload.get("token") or ""
+    name = (payload.get("name") or "").strip()
+
+    if not server_id and not url:
+        return 400, {"ok": False, "error": "provide an id or a url"}
+
+    if server_id:
+        saved = store.get(server_id)
+        if saved is None and listener is not None:
+            saved = next((d for d in listener.discovered() if d.get("id") == server_id), None)
+        if saved is None:
+            return 404, {"ok": False, "error": f"unknown server {server_id!r}"}
+        url = url or saved.get("url", "")
+        name = name or saved.get("name") or server_id
+        token = token or saved.get("token") or ""
+
+    ok, info = verify(url, token)
+    if not ok:
+        code = 401 if info == "unauthorized" else 502
+        return code, {"ok": False, "error": info}
+
+    # Trust /whoami's id over the beacon's claim — that is what defeats a spoofed beacon.
+    real_id = info.get("id") or server_id or url
+    real_name = name or info.get("name") or real_id
+    return 200, {"ok": True, "server": _bind(store, supervisor, real_id, real_name, url, token)}
+
+
+def add_server(store: ServerStore, supervisor, payload: dict,
+               verify=verify_server) -> tuple[int, dict]:
+    """Body of `POST /servers/add` — manual add-by-address for beacon-blocked LANs."""
+    payload = payload or {}
+    url = (payload.get("url") or "").strip()
+    token = payload.get("token") or ""
+    if not url:
+        return 400, {"ok": False, "error": "provide a url"}
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    ok, info = verify(url, token)
+    if not ok:
+        code = 401 if info == "unauthorized" else 502
+        return code, {"ok": False, "error": info}
+    real_id = info.get("id") or url
+    real_name = (payload.get("name") or "").strip() or info.get("name") or real_id
+    return 200, {"ok": True, "server": _bind(store, supervisor, real_id, real_name, url, token)}

@@ -15,6 +15,7 @@ message if not). Run from the repo root:
 """
 from __future__ import annotations
 
+import json
 import sys
 import time
 import urllib.error
@@ -32,7 +33,7 @@ from reachy_app.movement import (
     MovementPlayer, resolve, PRESETS, HEAD_LIMITS, BASE_LIMIT, MAX_KEYFRAMES, MAX_TOTAL_S, MIN_DUR,
 )
 from reachy_app.runtime_config import RuntimeConfig, config_actions, restart_current_app, LIVE_FIELDS
-from reachy_app.servers import ServerStore, public_server
+from reachy_app.servers import ServerStore, public_server, servers_view, select_server, add_server
 from reachy_app.supervisor import Supervisor
 from reachy_app.vad import SilenceEndpointer
 
@@ -788,6 +789,87 @@ def test_server_store_survives_corrupt_file() -> None:
     check("non-dict -> empty store", s2.list_saved() == [])
 
 
+class _FakeSup:
+    def __init__(self): self.rebuilds = 0
+    def rebuild(self): self.rebuilds += 1
+
+
+def test_servers_view_merges_and_hides_tokens() -> None:
+    print("servers: view merges discovered+saved and never exposes a token")
+    store = ServerStore(path=_tmp_servers_path())
+    store.upsert("id-a", "studio", "http://1.1.1.1:8080", "secret-a")
+    store.select("id-a")
+
+    class _Lis:
+        def discovered(self): return [
+            {"id": "id-a", "name": "studio", "url": "http://1.1.1.1:8080", "seen_at": 1.0},
+            {"id": "id-z", "name": "newmac", "url": "http://9.9.9.9:8080", "seen_at": 2.0},
+        ]
+    v = servers_view(store, _Lis())
+    check("selected_id reported", v["selected_id"] == "id-a", str(v["selected_id"]))
+    check("saved listed", len(v["saved"]) == 1, str(v["saved"]))
+    check("discovered listed", len(v["discovered"]) == 2, str(v["discovered"]))
+    by_id = {d["id"]: d for d in v["discovered"]}
+    check("known server flagged saved", by_id["id-a"]["saved"] is True, str(by_id["id-a"]))
+    check("unknown server flagged unsaved", by_id["id-z"]["saved"] is False, str(by_id["id-z"]))
+    check("NO token anywhere in the view", "secret-a" not in json.dumps(v), json.dumps(v)[:200])
+
+
+def test_select_server_verifies_then_binds() -> None:
+    print("servers: select verifies the token via /whoami, then binds + rebuilds")
+    store = ServerStore(path=_tmp_servers_path())
+    sup = _FakeSup()
+    ok_verify = lambda url, token, **k: (True, {"id": "id-a", "name": "studio", "version": "1"})
+
+    code, body = select_server(store, sup, {"url": "http://1.1.1.1:8080", "token": "t"}, verify=ok_verify)
+    check("verified select -> 200", code == 200 and body["ok"] is True, str(body))
+    check("server saved", store.get("id-a") is not None, str(store.list_saved()))
+    check("server selected", store.selected_id == "id-a", str(store.selected_id))
+    check("worker rebuilt", sup.rebuilds == 1, str(sup.rebuilds))
+    # Note: bare "token" would false-positive on the legitimate "has_token" field
+    # (public_server()'s mandated shape) — assert on the quoted key instead.
+    check("response hides the token", '"token"' not in json.dumps(body), json.dumps(body))
+
+    bad = lambda url, token, **k: (False, "unauthorized")
+    code2, body2 = select_server(store, sup, {"id": "id-a", "token": "wrong"}, verify=bad)
+    check("bad token -> 401", code2 == 401 and body2["ok"] is False, str(body2))
+    check("no rebuild on failure", sup.rebuilds == 1, str(sup.rebuilds))
+
+    code3, body3 = select_server(store, sup, {}, verify=ok_verify)
+    check("missing id and url -> 400", code3 == 400, str(body3))
+
+    code4, body4 = select_server(store, sup, {"id": "ghost", "token": "t"}, verify=ok_verify)
+    check("unknown saved id -> 404", code4 == 404, str(body4))
+
+
+def test_select_reuses_stored_token_when_omitted() -> None:
+    print("servers: selecting a saved server reuses its stored token")
+    store = ServerStore(path=_tmp_servers_path())
+    store.upsert("id-a", "studio", "http://1.1.1.1:8080", "stored-tok")
+    seen = {}
+    def verify(url, token, **k):
+        seen["token"] = token
+        return True, {"id": "id-a", "name": "studio", "version": "1"}
+    code, body = select_server(store, _FakeSup(), {"id": "id-a"}, verify=verify)
+    check("selected ok", code == 200, str(body))
+    check("used the stored token", seen.get("token") == "stored-tok", str(seen))
+
+
+def test_add_server_by_address() -> None:
+    print("servers: add-by-address verifies then saves (beacon-blocked LAN fallback)")
+    store = ServerStore(path=_tmp_servers_path())
+    sup = _FakeSup()
+    verify = lambda url, token, **k: (True, {"id": "id-m", "name": "manual", "version": "1"})
+    code, body = add_server(store, sup, {"url": "http://7.7.7.7:8080", "token": "t"}, verify=verify)
+    check("added -> 200", code == 200 and body["ok"] is True, str(body))
+    check("saved under the id /whoami reported", store.get("id-m") is not None, str(store.list_saved()))
+    code2, body2 = add_server(store, sup, {"token": "t"}, verify=verify)
+    check("missing url -> 400", code2 == 400, str(body2))
+    bad = lambda url, token, **k: (False, "unauthorized")
+    code3, body3 = add_server(store, sup, {"url": "http://8.8.8.8:8080", "token": "x"}, verify=bad)
+    check("unverified -> 401, not saved", code3 == 401 and store.get("id-x") is None, str(body3))
+
+
 def test_apply_config_request_flow() -> None:
     print("config route: apply_config_request validates, sets level, rebuilds, flags restart")
     import logging as _logging
@@ -984,6 +1066,8 @@ def main() -> int:
         test_server_store_roundtrip_and_select, test_server_store_never_leaks_token,
         test_server_store_file_is_not_world_readable,
         test_server_store_survives_corrupt_file,
+        test_servers_view_merges_and_hides_tokens, test_select_server_verifies_then_binds,
+        test_select_reuses_stored_token_when_omitted, test_add_server_by_address,
         test_apply_config_request_flow,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
