@@ -39,7 +39,9 @@ from .connector_client import ConnectorClient
 from .movement import MovementPlayer
 from .discovery import BeaconListener, verify_server
 from .runtime_config import RuntimeConfig, restart_current_app
-from .servers import ServerStore, add_server, select_server, servers_view, client_allowed
+from .servers import (
+    ServerStore, add_server, select_server, servers_view, client_allowed, server_host_allowed,
+)
 from .supervisor import Supervisor, apply_config_request
 
 
@@ -196,6 +198,16 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
         # Launch logic: rebind the last-used server ONLY if it still verifies.
         # Never auto-switch to some other discovered Mac — the user chooses.
         sel = store.selected()
+        if sel is not None and not server_host_allowed(sel, settings.settings_allow):
+            # A server bound while SETTINGS_ALLOW was open must NOT be silently
+            # re-established once the operator restricts the policy — otherwise
+            # tightening the allowlist would never evict whoever bound us.
+            self.logger.warning(
+                "saved server %s is not permitted by SETTINGS_ALLOW — parking instead of "
+                "rebinding it; re-select from an allowed host (or from the robot itself).",
+                sel.get("url"))
+            store.selected_id = None
+            sel = None
         if sel is not None:
             ok, info = verify_server(sel["url"], sel.get("token", ""))
             real_id = (info or {}).get("id") if isinstance(info, dict) else None

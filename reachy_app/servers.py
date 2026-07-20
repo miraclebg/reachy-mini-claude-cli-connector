@@ -284,3 +284,18 @@ def client_allowed(client_host: str | None, allow_spec: str, bound_url: str | No
         except ValueError:
             log.warning("ignoring bad SETTINGS_ALLOW entry %r", entry)
     return False
+
+
+def server_host_allowed(entry: dict | None, allow_spec: str) -> bool:
+    """May we (re)bind to this saved server under the CURRENT policy?
+
+    Deliberately passes `bound_url=None`: a saved server must never vouch for ITSELF.
+    Otherwise a host that bound the robot while the allowlist was open would stay
+    trusted forever — the launch rebind would re-establish it, and the bound-host rule
+    in `client_allowed` would then keep approving that same host even after the
+    operator restricted `SETTINGS_ALLOW`. Trust has to be re-derived from the current
+    policy on every launch, not inherited from whatever was true at bind time.
+    """
+    if entry is None:
+        return False
+    return client_allowed(urlsplit(entry.get("url") or "").hostname, allow_spec, bound_url=None)

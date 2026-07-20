@@ -110,7 +110,7 @@ git pull
 | `CONNECTOR_TOKEN` | yes* | Must match the Mac's `server/.env`. *Required if the connector has auth on (it should). |
 | `MAX_UTTERANCE_S` | no | Max seconds recorded per turn (default 15). |
 | `VAD_SILENCE_MS` / `VAD_RMS_THRESHOLD` | no | End-of-speech tuning (wake-word path; the button uses release). |
-| `SETTINGS_ALLOW` | no | Comma-separated IPs/CIDRs allowed to change which connector the robot is bound to (`POST /servers/select\|add\|rescan` on `:8042`). Empty = open (a warning is logged). Loopback and the currently-bound connector's host are always allowed. |
+| `SETTINGS_ALLOW` | no | Comma-separated IPs/CIDRs allowed to change which connector the robot is bound to (`POST /servers/select\|add\|rescan` on `:8042`). Empty = open (a warning is logged). Loopback and the currently-bound connector's host are always allowed. Setting this after running open will drop any saved server whose host isn't permitted (it parks; re-select from an allowed host or from the robot itself over loopback). |
 
 The **language/voice/model** all live on the **Mac** side (`server/.env` + the voice
 prompt) — the robot just plays the audio the Mac returns. To change language, see the

@@ -35,6 +35,7 @@ from reachy_app.movement import (
 from reachy_app.runtime_config import RuntimeConfig, config_actions, restart_current_app, LIVE_FIELDS
 from reachy_app.servers import (
     ServerStore, public_server, servers_view, select_server, add_server, client_allowed,
+    server_host_allowed,
 )
 from reachy_app.supervisor import Supervisor
 from reachy_app.vad import SilenceEndpointer
@@ -990,6 +991,30 @@ def test_client_allowed_guard() -> None:
           client_allowed("10.10.9.15", "not-a-cidr, 10.10.9.15") is True)
 
 
+def test_bound_server_cannot_vouch_for_itself_across_a_policy_change() -> None:
+    print("servers: a server bound while OPEN is not auto-rebound once you restrict")
+    attacker = {"id": "id-x", "name": "evil", "url": "http://10.10.9.66:8080", "token": "t"}
+    mine = {"id": "id-m", "name": "mine", "url": "http://10.10.9.15:8080", "token": "t"}
+
+    check("open policy -> any saved server may rebind", server_host_allowed(attacker, "") is True)
+    spec = "10.10.9.15"
+    check("restricted -> an allowed server still rebinds", server_host_allowed(mine, spec) is True)
+    # THE REGRESSION GUARD: the previously-bound outsider must NOT be re-established.
+    check("restricted -> the previously-bound outsider is dropped",
+          server_host_allowed(attacker, spec) is False)
+    check("a server on the robot itself is always fine",
+          server_host_allowed({"url": "http://127.0.0.1:8080"}, spec) is True)
+    check("no entry -> not allowed", server_host_allowed(None, spec) is False)
+    check("junk url -> not allowed", server_host_allowed({"url": "nonsense"}, spec) is False)
+
+    # And prove the self-vouching path is really closed: client_allowed WOULD approve
+    # the attacker if the attacker's own url were passed as bound_url...
+    check("client_allowed self-vouch would approve (why we pass bound_url=None)",
+          client_allowed("10.10.9.66", spec, bound_url="http://10.10.9.66:8080") is True)
+    # ...but server_host_allowed must not do that.
+    check("server_host_allowed refuses to self-vouch", server_host_allowed(attacker, spec) is False)
+
+
 def test_apply_config_request_flow() -> None:
     print("config route: apply_config_request validates, sets level, rebuilds, flags restart")
     import logging as _logging
@@ -1193,6 +1218,7 @@ def main() -> int:
         test_select_reuses_stored_token_when_omitted, test_add_server_by_address,
         test_select_and_add_never_echo_the_token_value,
         test_client_allowed_guard,
+        test_bound_server_cannot_vouch_for_itself_across_a_policy_change,
         test_apply_config_request_flow,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
