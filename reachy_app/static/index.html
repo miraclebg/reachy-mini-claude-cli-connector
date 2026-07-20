@@ -114,6 +114,7 @@
   .gate.hidden { display: none; }
   .gate-title { font-size: 1.1rem; font-weight: 600; margin-bottom: .3rem; }
   .gate-sub { font-size: .85rem; opacity: .6; margin-bottom: 1rem; }
+  /* The only rule that hides #log when parked — there is no generic .hidden rule. */
   #gate ~ #log.hidden { display: none; }
 
   footer { flex: 0 0 auto; padding: .9rem 1rem calc(.9rem + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
@@ -230,7 +231,7 @@
     const tab = b.dataset.tab;
     document.querySelectorAll(".seg-btn").forEach(x => x.classList.toggle("on", x === b));
     document.querySelectorAll("main .tab").forEach(s => s.classList.toggle("hidden", s.dataset.tab !== tab));
-    footer.classList.toggle("hidden", tab !== "talk");
+    footer.classList.toggle("hidden", tab !== "talk" || isParked);
   }));
 
   // ---- hold-to-talk + live status/history (unchanged behaviour) ----
@@ -412,6 +413,13 @@
     // Ask for a token only when we have none stored, or the server rejected the last one.
     let token = "";
     if (s.has_token === false || row.dataset.needsToken === "1") {
+      // Already prompting for this row? Focus that box instead of stacking another.
+      const open = row.nextElementSibling;
+      if (open && open.classList.contains("srv-tok")) {
+        const existing = open.querySelector("input");
+        if (existing) existing.focus();
+        return;
+      }
       const box = document.createElement("div"); box.className = "srv-tok";
       const inp = document.createElement("input"); inp.type = "password"; inp.placeholder = "token";
       const go = document.createElement("button"); go.className = "cfg-btn"; go.textContent = "Connect";
@@ -453,8 +461,10 @@
     document.querySelector('.seg-btn[data-tab="settings"]').click());
 
   // show the gate whenever the app is parked (no brain bound)
+  var isParked = false;   // var: read by the tab handler defined earlier in this script
   function applyGate(state) {
     const parked = state === "parked";
+    isParked = parked;
     gate.classList.toggle("hidden", !parked);
     logEl.classList.toggle("hidden", parked);
     footer.classList.toggle("hidden", parked || document.querySelector('.seg-btn.on').dataset.tab !== "talk");
