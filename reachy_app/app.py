@@ -36,7 +36,9 @@ from .audio import ReachyMiniBackend
 from .button_server import ButtonState, History, StatusState
 from .connector_client import ConnectorClient
 from .movement import MovementPlayer
+from .discovery import BeaconListener, verify_server
 from .runtime_config import RuntimeConfig, restart_current_app
+from .servers import ServerStore, add_server, select_server, servers_view
 from .supervisor import Supervisor, apply_config_request
 
 
@@ -158,10 +160,35 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
             return Response(content=bytes(jpeg), media_type="image/jpeg")
 
         backend = ReachyMiniBackend(mini=reachy_mini)
+
+        # --- multi-server discovery + binding ---
+        store = ServerStore()
+        listener = BeaconListener()
+        listener.start()
+
+        def _bound_server() -> dict | None:
+            """The server the worker should talk to, or None -> park + show the gate."""
+            return store.selected()
+
         supervisor = Supervisor(
             backend=backend, config=config,
             button=button, status=status, history=history,
+            server_provider=_bound_server,
         )
+
+        # Launch logic: rebind the last-used server ONLY if it still verifies.
+        # Never auto-switch to some other discovered Mac — the user chooses.
+        sel = store.selected()
+        if sel is not None:
+            ok, info = verify_server(sel["url"], sel.get("token", ""))
+            if ok:
+                self.logger.info("bound last-used server %s (%s)", sel.get("name"), sel["url"])
+            else:
+                self.logger.warning("last-used server %s unreachable (%s) — parking",
+                                    sel.get("url"), info)
+                store.selected_id = None  # park; discovery will offer candidates
+        else:
+            self.logger.info("no server selected yet — parking until one is picked")
 
         @app.get("/config")
         def _get_config() -> dict:
@@ -176,6 +203,25 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
         def _restart_app() -> dict:
             return {"ok": restart_current_app(logger=self.logger)}
 
+        @app.get("/servers")
+        def _get_servers() -> dict:
+            return servers_view(store, listener)
+
+        @app.post("/servers/select")
+        def _select_server(payload: dict) -> Response:
+            code, body = select_server(store, supervisor, payload, listener=listener)
+            return JSONResponse(body, status_code=code)
+
+        @app.post("/servers/add")
+        def _add_server(payload: dict) -> Response:
+            code, body = add_server(store, supervisor, payload)
+            return JSONResponse(body, status_code=code)
+
+        @app.post("/servers/rescan")
+        def _rescan_servers() -> dict:
+            listener.clear()
+            return {"ok": True}
+
         self.logger.info("Reachy Claude connector app running — open %s to talk.", self.custom_app_url)
         supervisor.start()
         try:
@@ -183,6 +229,7 @@ class ReachyClaudeConnectorApp(ReachyMiniApp):
                 stop_event.wait(0.2)
         finally:
             supervisor.stop()
+            listener.stop()
 
 
 if __name__ == "__main__":
