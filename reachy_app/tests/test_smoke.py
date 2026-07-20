@@ -644,6 +644,24 @@ def test_server_store_roundtrip_and_select() -> None:
     check("forget removes", s2.forget("id-a") is True and s2.get("id-a") is None)
 
 
+def test_server_store_file_is_not_world_readable() -> None:
+    print("servers: the token-bearing store is written 0600, not world-readable")
+    import os as _os
+    import stat as _stat
+    p = _tmp_servers_path()
+    s = ServerStore(path=p)
+    s.upsert("id-a", "studio", "http://1.1.1.1:8080", "sup3rs3cret")
+    mode = _stat.S_IMODE(_os.stat(p).st_mode)
+    check("store file exists", _os.path.exists(p), p)
+    check("mode is 0600", mode == 0o600, oct(mode))
+    check("not group-readable", not (mode & _stat.S_IRGRP), oct(mode))
+    check("not world-readable", not (mode & _stat.S_IROTH), oct(mode))
+    # a rewrite (select -> save) must not loosen it again
+    s.select("id-a")
+    mode2 = _stat.S_IMODE(_os.stat(p).st_mode)
+    check("still 0600 after a rewrite", mode2 == 0o600, oct(mode2))
+
+
 def test_server_store_never_leaks_token() -> None:
     print("servers: the public projection hides the token")
     p = _tmp_servers_path()
@@ -866,6 +884,7 @@ def main() -> int:
         test_beacon_listener_expires_stale, test_beacon_listener_survives_busy_port_and_recovers,
         test_verify_server_token_outcomes,
         test_server_store_roundtrip_and_select, test_server_store_never_leaks_token,
+        test_server_store_file_is_not_world_readable,
         test_server_store_survives_corrupt_file,
         test_apply_config_request_flow,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,

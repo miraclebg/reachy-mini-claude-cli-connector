@@ -73,11 +73,17 @@ class ServerStore:
     def _save_locked(self) -> None:
         payload = {"servers": self._servers, "last_selected_id": self.selected_id}
         try:
-            os.makedirs(os.path.dirname(self._path) or ".", exist_ok=True)
+            os.makedirs(os.path.dirname(self._path) or ".", mode=0o700, exist_ok=True)
             tmp = self._path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
+            # This file holds per-server TOKENS. Create it 0600 *at open time* rather
+            # than chmod-ing after writing — a chmod-after-write leaves a window where
+            # the secrets are world-readable. Keeping tokens out of HTTP responses
+            # (see `public_server`) would be pointless if any local user could just
+            # read them off disk.
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(payload, fh, indent=2)
-            os.replace(tmp, self._path)
+            os.replace(tmp, self._path)  # preserves the 0600 mode
         except OSError as e:
             log.warning("could not persist servers store %s: %s", self._path, e)
 
