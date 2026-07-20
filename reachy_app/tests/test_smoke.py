@@ -560,7 +560,7 @@ def test_beacon_listener_expires_stale() -> None:
 
 
 def test_beacon_listener_survives_busy_port_and_recovers() -> None:
-    print("discovery: a busy port degrades gracefully and start() can recover later")
+    print("discovery: a busy port degrades, and the SAME listener can retry once it frees")
     import socket as _socket
     port = 48995
     # Hog the port so the listener's bind() fails.
@@ -568,27 +568,28 @@ def test_beacon_listener_survives_busy_port_and_recovers() -> None:
     hog.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
     hog.bind(("", port))
     lis = BeaconListener(port=port, ttl_s=5.0)
+    hog_closed = False
     try:
-        lis.start()                      # must NOT raise
+        lis.start()                       # bind fails; must NOT raise
         check("busy port does not crash", True)
-        check("listener thread exits (nothing received)",
-              _wait_until(lambda: not lis.is_alive()), "thread still alive")
+        check("listener thread exits", _wait_until(lambda: not lis.is_alive()), "still alive")
         check("no phantom discoveries", lis.discovered() == [], str(lis.discovered()))
+
+        # Free the port and RETRY THE SAME INSTANCE. This is the actual regression
+        # guard: the old start() had recorded a dead thread and would no-op forever.
+        hog.close()
+        hog_closed = True
+        lis.start()
+        check("same listener recovers on retry", _wait_until(lambda: lis.is_alive()), "did not restart")
+        time.sleep(0.3)
+        _send_beacon(port, {"reachy_connector": 1, "id": "r1", "name": "m",
+                            "url": "http://4.4.4.4:8080"})
+        check("receives after recovery", _wait_until(lambda: len(lis.discovered()) == 1),
+              str(lis.discovered()))
     finally:
         lis.stop()
-        hog.close()
-    # Port is free now: a retry must actually bind and work (this is the regression
-    # guard — the old start() no-opped forever once a dead thread was recorded).
-    lis2 = BeaconListener(port=port, ttl_s=5.0)
-    lis2.start()
-    try:
-        check("recovers on a free port", _wait_until(lambda: lis2.is_alive()))
-        time.sleep(0.3)
-        _send_beacon(port, {"reachy_connector": 1, "id": "r1", "name": "m", "url": "http://4.4.4.4:8080"})
-        check("receives after recovery", _wait_until(lambda: len(lis2.discovered()) == 1),
-              str(lis2.discovered()))
-    finally:
-        lis2.stop()
+        if not hog_closed:
+            hog.close()
 
 
 def test_verify_server_token_outcomes() -> None:
