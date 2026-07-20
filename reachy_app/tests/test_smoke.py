@@ -26,6 +26,7 @@ from reachy_app.audio import AudioBackend, pcm_to_wav, wav_to_pcm, wav_duration_
 from reachy_app.button_server import ButtonServer, ButtonState, History, StatusState
 from reachy_app.config import settings
 from reachy_app.connector_client import ConnectorClient
+from reachy_app.discovery import BeaconListener, DISCOVERY_PORT, parse_beacon, verify_server
 from reachy_app.loop import ConversationLoop
 from reachy_app.movement import (
     MovementPlayer, resolve, PRESETS, HEAD_LIMITS, BASE_LIMIT, MAX_KEYFRAMES, MAX_TOTAL_S, MIN_DUR,
@@ -498,6 +499,92 @@ def test_supervisor_restarts_on_build_failure() -> None:
     check("thread stopped after recovery", not sup._thread_alive())
 
 
+def _send_beacon(port, obj) -> None:
+    import json as _json, socket as _socket
+    s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+    try:
+        s.sendto(_json.dumps(obj).encode(), ("127.0.0.1", port))
+    finally:
+        s.close()
+
+
+def test_parse_beacon_accepts_and_rejects() -> None:
+    print("discovery: beacon parsing accepts the contract, rejects junk")
+    import json as _json
+    good = _json.dumps({"reachy_connector": 1, "id": "i1", "name": "mac",
+                        "url": "http://10.0.0.5:8080"}).encode()
+    got = parse_beacon(good)
+    check("accepts a valid beacon", got is not None and got["id"] == "i1", str(got))
+    check("keeps name+url", got and got["name"] == "mac" and got["url"] == "http://10.0.0.5:8080", str(got))
+    check("rejects non-JSON", parse_beacon(b"not json") is None)
+    check("rejects wrong magic", parse_beacon(_json.dumps({"id": "x", "name": "n", "url": "u"}).encode()) is None)
+    check("rejects missing url", parse_beacon(_json.dumps(
+        {"reachy_connector": 1, "id": "x", "name": "n"}).encode()) is None)
+    check("rejects non-dict", parse_beacon(_json.dumps([1, 2]).encode()) is None)
+
+
+def test_beacon_listener_collects_and_dedupes() -> None:
+    print("discovery: listener collects beacons, dedupes by id, honours clear()")
+    port = 48997
+    lis = BeaconListener(port=port)
+    lis.start()
+    try:
+        time.sleep(0.3)
+        _send_beacon(port, {"reachy_connector": 1, "id": "a", "name": "mac-a", "url": "http://1.1.1.1:8080"})
+        _send_beacon(port, {"reachy_connector": 1, "id": "b", "name": "mac-b", "url": "http://2.2.2.2:8080"})
+        _send_beacon(port, {"reachy_connector": 1, "id": "a", "name": "mac-a2", "url": "http://1.1.1.9:8080"})
+        _send_beacon(port, {"nope": 1})
+        check("both servers discovered", _wait_until(lambda: len(lis.discovered()) == 2), str(lis.discovered()))
+        by_id = {d["id"]: d for d in lis.discovered()}
+        check("dedupes by id (latest wins)", by_id.get("a", {}).get("url") == "http://1.1.1.9:8080", str(by_id))
+        check("junk ignored", set(by_id) == {"a", "b"}, str(by_id))
+        lis.clear()
+        check("clear() empties the list", lis.discovered() == [], str(lis.discovered()))
+    finally:
+        lis.stop()
+    check("listener stops cleanly", not lis.is_alive())
+
+
+def test_beacon_listener_expires_stale() -> None:
+    print("discovery: entries older than the TTL disappear")
+    port = 48996
+    lis = BeaconListener(port=port, ttl_s=0.3)
+    lis.start()
+    try:
+        time.sleep(0.3)
+        _send_beacon(port, {"reachy_connector": 1, "id": "z", "name": "m", "url": "http://3.3.3.3:8080"})
+        check("appears", _wait_until(lambda: len(lis.discovered()) == 1), str(lis.discovered()))
+        check("expires after ttl", _wait_until(lambda: lis.discovered() == [], timeout=3.0), str(lis.discovered()))
+    finally:
+        lis.stop()
+
+
+def test_verify_server_token_outcomes() -> None:
+    print("discovery: /whoami verifies reachability AND the token")
+    class _R:
+        def __init__(self, code, payload=None): self.status_code = code; self._p = payload or {}
+        def json(self): return self._p
+
+    calls = []
+    def ok_get(url, headers=None, timeout=0):
+        calls.append((url, headers))
+        return _R(200, {"id": "i1", "name": "mac", "version": "1"})
+    ok, info = verify_server("http://1.1.1.1:8080", "tok", get=ok_get)
+    check("200 -> verified", ok is True and info["id"] == "i1", str(info))
+    check("hits /whoami", calls and calls[0][0].endswith("/whoami"), str(calls))
+    check("sends bearer token", calls and "tok" in str(calls[0][1]), str(calls))
+
+    ok2, err2 = verify_server("http://1.1.1.1:8080", "bad", get=lambda *a, **k: _R(401))
+    check("401 -> unauthorized", ok2 is False and err2 == "unauthorized", str(err2))
+
+    ok3, err3 = verify_server("http://1.1.1.1:8080", "t", get=lambda *a, **k: _R(500))
+    check("500 -> not verified", ok3 is False, str(err3))
+
+    def boom(*a, **k): raise OSError("no route to host")
+    ok4, err4 = verify_server("http://1.1.1.1:8080", "t", get=boom)
+    check("unreachable -> not verified", ok4 is False and "no route" in err4.lower(), str(err4))
+
+
 def test_apply_config_request_flow() -> None:
     print("config route: apply_config_request validates, sets level, rebuilds, flags restart")
     import logging as _logging
@@ -686,6 +773,8 @@ def main() -> int:
         test_supervisor_rebuild_swaps_params, test_supervisor_stop_is_clean,
         test_supervisor_crash_restarts_and_reports_error,
         test_supervisor_restarts_on_build_failure,
+        test_parse_beacon_accepts_and_rejects, test_beacon_listener_collects_and_dedupes,
+        test_beacon_listener_expires_stale, test_verify_server_token_outcomes,
         test_apply_config_request_flow,
         test_movement_preset_look_left, test_movement_clamps_out_of_range,
         test_movement_velocity_floor, test_movement_unknown_preset_is_noop,
