@@ -347,6 +347,40 @@ def test_restart_app_posts_daemon() -> None:
     check("returns False when the daemon is unreachable", ok2 is False)
 
 
+def test_restart_app_teardown_counts_as_success() -> None:
+    print("runtime config: a mid-request teardown counts as an accepted restart")
+    # On the robot the daemon stops THIS process while our POST is in flight, so the
+    # request never completes. That is the restart working, not failing.
+    # (VERIFIED-ON-HARDWARE 2026-07-20: external caller got HTTP 200 in ~2s; the
+    # in-process caller timed out and used to report a bogus failure.)
+    class _Timeout(Exception):
+        pass
+    _Timeout.__name__ = "ReadTimeout"
+
+    def timeout_post(url, timeout=0):
+        raise _Timeout("HTTPConnectionPool: Read timed out.")
+    check("timeout -> accepted (True)", restart_current_app(post=timeout_post) is True)
+
+    def reset_post(url, timeout=0):
+        raise OSError("Connection aborted, connection reset by peer")
+    check("connection reset -> accepted (True)", restart_current_app(post=reset_post) is True)
+
+    # Genuine failures must still report False.
+    def refused_post(url, timeout=0):
+        raise OSError("[Errno 61] Connection refused")
+    check("connection refused -> failure (False)", restart_current_app(post=refused_post) is False)
+
+    class _HTTPError(Exception):
+        pass
+    _HTTPError.__name__ = "HTTPError"
+
+    class _BadResp:
+        def raise_for_status(self): raise _HTTPError("404 Client Error: Not Found")
+    def notfound_post(url, timeout=0):
+        return _BadResp()
+    check("HTTP error status -> failure (False)", restart_current_app(post=notfound_post) is False)
+
+
 # --------------------------- supervisor ---------------------------
 
 class _RecordingClientFactory:
@@ -648,6 +682,7 @@ def main() -> int:
         test_runtime_config_persist_roundtrip, test_runtime_config_validation_atomic,
         test_runtime_config_robust_load_and_types,
         test_config_actions_mapping, test_restart_app_posts_daemon,
+        test_restart_app_teardown_counts_as_success,
         test_supervisor_rebuild_swaps_params, test_supervisor_stop_is_clean,
         test_supervisor_crash_restarts_and_reports_error,
         test_supervisor_restarts_on_build_failure,

@@ -155,10 +155,39 @@ def config_actions(changed: set[str]) -> dict:
     }
 
 
+def _is_teardown_failure(exc: Exception) -> bool:
+    """True when a failed restart POST actually means "the daemon accepted it and is
+    already killing us", rather than "the daemon isn't there".
+
+    A refused connection (no daemon) or an HTTP error status (wrong path — we DID get a
+    reply) are real failures. A timeout or a dropped/reset connection is the signature of
+    the daemon tearing this process down mid-request, i.e. the restart working.
+    """
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    if "refused" in text:
+        return False
+    if "httperror" in name:  # a real HTTP status came back (e.g. 404)
+        return False
+    return "timeout" in name or "timeout" in text or any(
+        s in text for s in
+        ("reset by peer", "connection aborted", "remotedisconnected", "connection broken")
+    )
+
+
 def restart_current_app(post=None, logger=log) -> bool:
     """Ask the Reachy daemon to restart THIS app (needed for a media-backend change).
 
-    VERIFY-ON-HARDWARE: confirm the daemon base URL + path on the robot.
+    Returns whether the restart was *accepted*, which is the most this can honestly
+    report: we are the process being restarted, so we normally never see the reply — the
+    daemon stops us while our request is still in flight.
+
+    VERIFIED-ON-HARDWARE (2026-07-20): an external caller gets HTTP 200 in ~2s, but the
+    in-process caller always timed out (and so reported a bogus failure) because the
+    daemon cannot finish the restart until this process exits. Hence `_is_teardown_failure`:
+    a timeout/dropped connection counts as success; only a refused connection or an HTTP
+    error status is a genuine failure.
+
     Overridable via REACHY_DAEMON_URL. `post` is injectable for tests.
     """
     if post is None:
@@ -169,6 +198,10 @@ def restart_current_app(post=None, logger=log) -> bool:
     try:
         post(url, timeout=5).raise_for_status()
         return True
-    except Exception as e:  # daemon down / wrong path -> report, don't crash the app
+    except Exception as e:
+        if _is_teardown_failure(e):
+            # Expected path on the robot: the daemon is stopping us mid-request.
+            logger.info("restart accepted; daemon is stopping us (%s: %s)", type(e).__name__, e)
+            return True
         logger.warning("restart-current-app failed (%s): %s", url, e)
         return False
