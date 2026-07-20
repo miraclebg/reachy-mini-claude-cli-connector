@@ -584,11 +584,25 @@ def test_beacon_listener_collects_and_dedupes() -> None:
     lis.start()
     try:
         time.sleep(0.3)
+        # Small gaps between sends: a tight burst can overrun the socket buffer and
+        # drop a datagram, which is indistinguishable from a dedupe bug.
         _send_beacon(port, {"reachy_connector": 1, "id": "a", "name": "mac-a", "url": "http://1.1.1.1:8080"})
+        time.sleep(0.05)
         _send_beacon(port, {"reachy_connector": 1, "id": "b", "name": "mac-b", "url": "http://2.2.2.2:8080"})
+        time.sleep(0.05)
         _send_beacon(port, {"reachy_connector": 1, "id": "a", "name": "mac-a2", "url": "http://1.1.1.9:8080"})
+        time.sleep(0.05)
         _send_beacon(port, {"nope": 1})
-        check("both servers discovered", _wait_until(lambda: len(lis.discovered()) == 2), str(lis.discovered()))
+
+        # Wait for the SETTLED state, not merely the count. Waiting on len()==2 could
+        # return after only the first two datagrams were processed — before the third
+        # ('a' updated to .9) landed — so "latest wins" then read a stale url and the
+        # test failed ~1 run in 3. Wait for the end state, then assert on a snapshot.
+        def _settled() -> bool:
+            m = {d["id"]: d for d in lis.discovered()}
+            return set(m) == {"a", "b"} and m["a"]["url"] == "http://1.1.1.9:8080"
+
+        check("beacons settle (both ids, 'a' updated)", _wait_until(_settled), str(lis.discovered()))
         by_id = {d["id"]: d for d in lis.discovered()}
         check("dedupes by id (latest wins)", by_id.get("a", {}).get("url") == "http://1.1.1.9:8080", str(by_id))
         check("junk ignored", set(by_id) == {"a", "b"}, str(by_id))
